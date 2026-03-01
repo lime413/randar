@@ -177,3 +177,7 @@ cython_debug/
 
 # Checkpoints
 *.pth
+
+# Datasets
+data/*
+!data/load_CIFAR10.py

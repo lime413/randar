@@ -19,7 +19,7 @@ def build_dataset(is_train, args, transform):
         dataset.nb_classes = 10
 
     elif args.dataset == "latent":
-        from .imagenet import INatLatentDataset
+        from .latent import INatLatentDataset
         dataset = INatLatentDataset(root_dir=args.data_path, transform=transform)
 
     else:

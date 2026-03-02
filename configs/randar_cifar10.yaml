@@ -1,0 +1,83 @@
+ar_model:
+  target: RandAR.model.randar_gpt.RandARTransformer
+  params:
+    n_layer: 6
+    n_head: 8
+    dim: 352
+    multiple_of: 256   # explicit (matches default)
+    model_type: c2i
+    vocab_size: 512
+    block_size: 64
+    num_classes: 10
+    cls_token_num: 1
+    resid_dropout_p: 0.1
+    ffn_dropout_p: 0.1
+    drop_path_rate: 0.0
+    token_dropout_p: 0.1
+    position_order: raster  # random
+    grad_checkpointing: True
+    zero_class_qk: True
+    num_inference_steps: 88
+
+tokenizer:
+  target: tokenizer_vq.model.Model
+  params:
+    num_hiddens: 128
+    num_residual_hiddens: 32
+    num_residual_layers: 2
+    embedding_dim: 64
+    num_embeddings: 512
+    commitment_cost: 0.25
+    decay: 0.99
+
+accelerator:
+  gradient_accumulation_steps: 1
+  mixed_precision: bf16
+  log_with: wandb
+
+optimizer:
+  lr: 0.0004
+  weight_decay: 0.05 # 5e-2
+  beta1: 0.9
+  beta2: 0.95
+  max_grad_norm: 1.0
+  skip_grad_iter: 100
+  skip_grad_norm: 10
+
+lr_scheduler:
+  type: cosine
+  warm_up_iters: 50000
+  min_lr_ratio: 0.05
+  num_cycles: 0.5
+
+dataset:
+  name: cifar10
+  image_size: 32
+  num_classes: 10
+  batch_size: 128
+  num_workers: 8
+
+# training related parameters
+exp_name: "randar_cifar10"
+max_iters: 360000 # 100k firt
+global_batch_size: 512
+ema: False 
+ema_decay: 0.9999
+
+num_workers: 8
+log_every: 100
+ckpt_every: 10000
+visualize_every: 10 # every 10 log intervals, do one visualization
+keep_last_k: -1
+global_seed: 0
+
+results_dir: "results/" # will append exp_name later => results_dir/exp_name
+gpt_ckpt: None # path to resume from
+
+# for eval fid:
+vq_ckpt: "./checkpoints/vq_ds16_c2i.pt"
+
+fid_ref_path: "/mnt/localssd/dataset/VIRTUAL_imagenet256_labeled.npz"
+fid_save_dir: "/mnt/localssd/results_tmp/"
+fid_num_samples: 10000
+fid_eval_every: 500000

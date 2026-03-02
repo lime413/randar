@@ -2,9 +2,6 @@ import torch
 import torchvision
 import cv2
 import numpy as np
-import torch.nn.functional as F
-from torch.autograd import Variable
-from math import exp
 
 
 def make_grid(imgs: np.ndarray, scale=0.5, row_first=True):

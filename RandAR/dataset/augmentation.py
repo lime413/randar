@@ -1,4 +1,3 @@
-# from https://github.com/openai/guided-diffusion/blob/8fb3ad9197f16bbc40620447b2742e13458d2831/guided_diffusion/image_datasets.py
 import math
 import random
 import numpy as np

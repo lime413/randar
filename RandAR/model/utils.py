@@ -1,4 +1,3 @@
-# drop_path cloned from https://github.com/FoundationVision/LlamaGen/blob/main/utils/drop_path.py
 import torch
 import math
 

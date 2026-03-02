@@ -1,9 +1,6 @@
 """ Search for the optimal cfg weights for the given model.
     First using 10k samples to find the optimal value, then run on 50k samples to report.
 """
-# Modified from:
-#   LLaMAGen: https://github.com/FoundationVision/LlamaGen/blob/main/autoregressive/sample/sample_c2i_ddp.py
-#   DiT:  https://github.com/facebookresearch/DiT/blob/main/sample_ddp.py
 import torch
 
 torch.backends.cuda.matmul.allow_tf32 = True

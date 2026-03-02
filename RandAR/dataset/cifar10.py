@@ -1,8 +1,5 @@
-import os
 from torch.utils import data
-from torchvision import datasets, transforms
-import torch
-import numpy as np
+from torchvision import datasets
 
 class CIFAR10WithIndex(data.Dataset):
     """

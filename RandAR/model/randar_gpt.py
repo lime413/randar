@@ -1,33 +1,20 @@
-# RandAR GPT Model
-# Modified from:
-#   LLaMAGen: https://github.com/FoundationVision/LlamaGen/blob/main/autoregressive/models/gpt.py
-#   VQGAN:    https://github.com/CompVis/taming-transformers/blob/master/taming/modules/transformer/mingpt.py
-#   DiT:      https://github.com/facebookresearch/DiT/blob/main/models.py
-#   nanoGPT:  https://github.com/karpathy/nanoGPT/blob/master/model.py
-#   llama:    https://github.com/facebookresearch/llama/blob/main/llama/model.py
-#   gpt-fast: https://github.com/pytorch-labs/gpt-fast/blob/main/model.py
-#   PixArt:   https://github.com/PixArt-alpha/PixArt-alpha/blob/master/diffusion/model/nets/PixArt_blocks.py
-
-import random
-import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from torch.utils.checkpoint import checkpoint
 
-from dataclasses import dataclass
 from typing import Optional, List, Tuple
 
 from .utils import DropPath, interleave_tokens, calculate_num_query_tokens_for_parallel_decoding
 from .generate import sample
-from .llamagen_gpt import LabelEmbedder, CaptionEmbedder, MLP, RMSNorm, \
-    FeedForward, KVCache, find_multiple, apply_rotary_emb, precompute_freqs_cis_2d
+from .llamagen_gpt import LabelEmbedder, CaptionEmbedder, RMSNorm, \
+    FeedForward, KVCache, find_multiple, precompute_freqs_cis_2d
 
 
 def batch_apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor):
     # x: (bs, seq_len, n_head, head_dim)
     # freqs_cis (bs, seq_len, head_dim // 2, 2)
-    bs, seq_len, n_head, head_dim = x.shape
+    bs, _, _, head_dim = x.shape
     xshaped = x.float().reshape(
         *x.shape[:-1], head_dim // 2, 2
     )  # (bs, seq_len, n_head, head_dim//2, 2)

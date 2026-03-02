@@ -1,6 +1,4 @@
-# RandAR/dataset/builder.py
 import os
-from torchvision import datasets, transforms
 
 def build_dataset(is_train, args, transform):
     if args.dataset == "imagenet":

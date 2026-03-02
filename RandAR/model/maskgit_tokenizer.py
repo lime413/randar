@@ -1,20 +1,3 @@
-# Modified from:
-#  https://github.com/huggingface/open-muse/blob/main/muse/modeling_maskgit_vqgan.py
-#  https://github.com/bytedance/1d-tokenizer/blob/main/modeling/modules/maskgit_vqgan.py
-# Copyright 2023 Google LLC and The HuggingFace Inc. team.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import math
 
 import torch
@@ -44,13 +27,13 @@ class MaskGITTokenizer(nn.Module):
     @torch.no_grad()
     def encode_code(self, x):
         hidden_states = self.encoder(x)
-        quantized_states, codebook_indices, codebook_loss = self.quantize(hidden_states)
+        _, codebook_indices, _ = self.quantize(hidden_states)
         return codebook_indices.detach()
     
     @torch.no_grad()
     def encode_indices(self, x):
         hidden_states = self.encoder(x)
-        quantized_states, codebook_indices, codebook_loss = self.quantize(hidden_states)
+        _, codebook_indices, _ = self.quantize(hidden_states)
         return codebook_indices.detach()
     
     @torch.no_grad()

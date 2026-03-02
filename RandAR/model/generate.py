@@ -5,15 +5,7 @@
 #   DiT:      https://github.com/facebookresearch/DiT/blob/main/models.py
 
 import torch
-import torch.nn as nn
 from torch.nn import functional as F
-import torch._dynamo.config
-import torch._inductor.config
-import copy
-
-# torch._inductor.config.coordinate_descent_tuning = True
-# torch._inductor.config.triton.unique_kernel_names = True
-# torch._inductor.config.fx_graph_cache = True # Experimental feature to reduce compilation times, will be on by default in future
 
 
 ### from https://huggingface.co/transformers/v3.2.0/_modules/transformers/generation_utils.html

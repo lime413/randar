@@ -242,9 +242,9 @@ class Model(nn.Module):
         return loss, x_recon, perplexity
     
     def tokenize_image(self, x):
-        z = self.encoder(x)
-        z = self.pre_vq_conv(z)
-        _, _, _, encodings = self.vq(z)
+        z = self._encoder(x)
+        z = self._pre_vq_conv(z)
+        _, _, _, encodings = self._vq_vae(z)
         indices = torch.argmax(encodings, dim=1)
 
         return indices.view(x.shape[0], -1)  # [B, 64]l

@@ -16,6 +16,17 @@ While the baseline uses a fixed **raster scan order** (row-by-row), this codebas
 
 ---
 
+## Pretrained Weights
+
+Pretrained weights for the **VQ-VAE tokenizer** and the **baseline RandAR model (raster order)** are available at:
+
+**Google Drive:**
+[https://drive.google.com/drive/folders/1B528vJu1Icn1PtIwJVfmd39WPNqIEEtg?usp=sharing](https://drive.google.com/drive/folders/1B528vJu1Icn1PtIwJVfmd39WPNqIEEtg?usp=sharing)
+
+This allows reproducing reported results without retraining the models.
+
+---
+
 ##  Reproduction Guide
 
 To reproduce the baseline experiment, please follow the steps below. The project uses [`uv`](https://docs.astral.sh/uv/) for fast and reliable dependency management.

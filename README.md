@@ -102,3 +102,6 @@ Evaluate the trained AR model by generating samples and computing metrics
 ```bash
 eval_c2i.py
 ```
+
+## Original repo of RandAR
+https://github.com/ziqipang/RandAR

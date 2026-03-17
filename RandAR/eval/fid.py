@@ -4,7 +4,7 @@ import torch
 from torchvision.transforms import Resize
 from tqdm import tqdm
 from torchmetrics.image.fid import FrechetInceptionDistance
-from RandAR.eval.utils import extract_latent_tokens, make_token_order
+from RandAR.utils.latents import extract_latent_tokens, make_token_order
 
 def is_perfect_square(n: int) -> bool:
     r = int(math.isqrt(n))

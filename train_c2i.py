@@ -17,7 +17,6 @@ torch.backends.cudnn.allow_tf32 = True
 from RandAR.utils.instantiation import instantiate_from_config
 from RandAR.dataset.builder import build_dataset
 from RandAR.utils.visualization import make_grid
-from RandAR.utils.logger import create_logger
 from RandAR.utils.lr_scheduler import get_scheduler
 
 from torchmetrics.image.fid import FrechetInceptionDistance
@@ -70,12 +69,6 @@ def main(args):
     os.makedirs(experiment_dir, exist_ok=True)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    logger = create_logger(experiment_dir)
-    logger.info(f"Experiment directory: {experiment_dir}")
-    logger.info(f"Checkpoint directory: {checkpoint_dir}")
-    logger.info(f"Device: {device}")
-    logger.info(f"Seed: {config.global_seed}")
-
     # -------------------------
     # ClearML (optional)
     # -------------------------
@@ -102,6 +95,11 @@ def main(args):
         cml_logger = task.get_logger()
         output_model = OutputModel(task=task, framework="PyTorch")
 
+    cml_logger.report_text(f"Experiment directory: {experiment_dir}")
+    cml_logger.report_text(f"Checkpoint directory: {checkpoint_dir}")
+    cml_logger.report_text(f"Device: {device}")
+    cml_logger.report_text(f"Seed: {config.global_seed}")
+
     # -------------------------
     # Dataset / Dataloader
     # -------------------------
@@ -125,16 +123,16 @@ def main(args):
     )
     data_loader = cycle(data_loader)
 
-    logger.info(f"Dataset contains {len(dataset)} samples.")
-    logger.info(f"Per-step batch size (on cuda:0): {per_gpu_batch_size}")
-    logger.info(f"Grad accumulation steps: {grad_accum}")
-    logger.info(f"Effective global batch size: {per_gpu_batch_size * grad_accum}")
+    cml_logger.report_text(f"Dataset contains {len(dataset)} samples.")
+    cml_logger.report_text(f"Per-step batch size (on cuda:0): {per_gpu_batch_size}")
+    cml_logger.report_text(f"Grad accumulation steps: {grad_accum}")
+    cml_logger.report_text(f"Effective global batch size: {per_gpu_batch_size * grad_accum}")
 
     # -------------------------
     # Model
     # -------------------------
     model = instantiate_from_config(config.ar_model).to(device)
-    logger.info(f"GPT Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    cml_logger.report_text(f"GPT Parameters: {sum(p.numel() for p in model.parameters()):,}")
     model.train()
 
     # -------------------------
@@ -175,20 +173,20 @@ def main(args):
 
         ckpt_file = os.path.join(ckpt_dir, "train_state.pt")
         if os.path.exists(ckpt_file):
-            logger.info(f"Resuming from {ckpt_file}")
+            cml_logger.report_text(f"Resuming from {ckpt_file}")
             state = torch.load(ckpt_file, map_location="cpu", weights_only=False)
             model.load_state_dict(state["model"])
             optimizer.load_state_dict(state["optimizer"])
             lr_scheduler.load_state_dict(state["lr_scheduler"])
             train_steps = int(state["train_steps"])
         else:
-            logger.info(f"Found {ckpt_dir} but no train_state.pt; starting from scratch.")
+            cml_logger.report_text(f"Found {ckpt_dir} but no train_state.pt; starting from scratch.")
 
     # -------------------------
     # Training loop
     # -------------------------
     total_iters = int(config.max_iters)
-    logger.info(f"Starting training from iteration {train_steps} to {total_iters}")
+    cml_logger.report_text(f"Starting training from iteration {train_steps} to {total_iters}")
 
     log_every = int(args.log_every)
     ckpt_every = int(args.ckpt_every)
@@ -335,7 +333,7 @@ def main(args):
             start_time = time.time()
 
             lr = lr_scheduler.get_last_lr()[0]
-            logger.info(
+            cml_logger.report_text(
                 f"Step {train_steps:08d} | Loss {avg_loss:.4f} | Time left {avg_time* (total_iters - train_steps):.0f}s | "
                 f"Grad Norm {avg_grad:.4f} | LR {lr:.6f}"
             )
@@ -363,7 +361,7 @@ def main(args):
                 batch_size=args.fid_batch,
                 image_size=args.image_size,
             )
-            logger.info(f"Step {train_steps:08d} | FID {fid_value:.3f}")
+            cml_logger.report_text(f"Step {train_steps:08d} | FID {fid_value:.3f}")
             if args.clearml:
                 cml_logger.report_scalar("eval", "FID", iteration=train_steps, value=fid_value)
 
@@ -443,7 +441,7 @@ def main(args):
 
             weights_file = os.path.join(ckpt_path, "train_state.pt")
             torch.save(state, weights_file)
-            logger.info(f"Saved Iter {train_steps} checkpoint to {ckpt_path}")
+            cml_logger.report_text(f"Saved Iter {train_steps} checkpoint to {ckpt_path}")
 
             if args.clearml:
                 # Track latest checkpoint as a ClearML "model" snapshot
@@ -472,11 +470,11 @@ def main(args):
         "config": dict(config),
     }
     torch.save(state, os.path.join(final_ckpt_dir, "train_state.pt"))
-    logger.info(f"Saved Final Iter {train_steps} checkpoint to {final_ckpt_dir}")
+    cml_logger.report_text(f"Saved Final Iter {train_steps} checkpoint to {final_ckpt_dir}")
 
     if args.clearml:
         task.close()
-    logger.info("Training Done.")
+    cml_logger.report_text("Training Done.")
 
 
 if __name__ == "__main__":

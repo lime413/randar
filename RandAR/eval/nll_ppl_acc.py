@@ -5,7 +5,7 @@ from typing import Tuple, Optional
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
-from RandAR.eval.utils import extract_latent_tokens, make_token_order
+from RandAR.utils.latents import extract_latent_tokens, make_token_order
 
 @torch.no_grad()
 def eval_nll_ppl_acc(

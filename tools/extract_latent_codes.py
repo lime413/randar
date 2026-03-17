@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import os
-import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 import numpy as np
 from omegaconf import OmegaConf
@@ -21,35 +18,8 @@ import sys
 sys.path.append("./")
 
 from RandAR.dataset.builder import build_dataset
-from RandAR.util import instantiate_from_config
-
-# -------------------------
-# Atomic save
-# -------------------------
-
-def _atomic_save_npy(dst_path: Path, array: np.ndarray) -> None:
-    """
-    Atomically save ndarray to .npy (temp file in same dir + os.replace).
-    """
-    dst_path = Path(dst_path)
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-
-    array = np.asarray(array, dtype=np.int64)
-
-    tmp_path = dst_path.with_name(dst_path.name + ".tmp." + uuid.uuid4().hex)
-    try:
-        with open(tmp_path, "wb") as f:
-            np.save(f, array, allow_pickle=False)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_path, dst_path)
-    finally:
-        if tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
-
+from RandAR.utils.instantiation import instantiate_from_config
+from RandAR.utils.latents import encode_images, _save_payload
 
 # -------------------------
 # Checkpoint loading
@@ -65,35 +35,6 @@ def load_tokenizer_from_yaml(args: argparse.Namespace, device: torch.device) -> 
 
 
 # -------------------------
-# Encoding: images -> indices
-# -------------------------
-
-@torch.inference_mode()
-def encode_images(
-    vq_model: torch.nn.Module,
-    x: torch.Tensor,
-    chunk_size: Optional[int] = None,
-) -> torch.Tensor:
-    """
-    Returns indices of shape (B, T) as torch.long.
-    """
-    def _encode_one(batch: torch.Tensor) -> torch.Tensor:
-        out = vq_model.encode_indices(batch)
-        out = out.to(dtype=torch.long)
-        if out.ndim != 2:
-            out = out.view(out.shape[0], -1)
-        return out
-
-    if chunk_size is None or x.shape[0] <= chunk_size:
-        return _encode_one(x)
-
-    parts = []
-    for s in range(0, x.shape[0], chunk_size):
-        parts.append(_encode_one(x[s:s + chunk_size]))
-    return torch.cat(parts, dim=0)
-
-
-# -------------------------
 # Transform pipeline
 # -------------------------
 def build_image_transform(args: argparse.Namespace) -> transforms.Compose:
@@ -104,29 +45,6 @@ def build_image_transform(args: argparse.Namespace) -> transforms.Compose:
             transforms.Normalize(mean=[0.5] * 3, std=[1.0] * 3, inplace=True),
         ])
     raise ValueError(f"Unsupported dataset: {args.dataset}")
-
-
-# -------------------------
-# Saving
-# -------------------------
-def _save_payload(payload: Dict[str, Any], out_dir: Path) -> None:
-    codes = payload["codes"]     # (B, 1, T)
-    labels = payload["labels"]   # (B,)
-    indices = payload["indices"] # (B,)
-
-    assert codes.ndim == 3, f"Expected (B,1,T), got {codes.shape}"
-    assert codes.shape[1] == 1, f"Expected num_aug=1 (no aug), got {codes.shape}"
-    assert labels.ndim == 1 and indices.ndim == 1
-    assert codes.shape[0] == labels.shape[0] == indices.shape[0]
-
-    for i in range(codes.shape[0]):
-        cls_id = int(labels[i])
-        sample_id = int(indices[i])
-        dst = out_dir / str(cls_id) / f"{sample_id}.npy"
-        if dst.exists():
-            continue
-        # Save per-sample array of shape (1, T)
-        _atomic_save_npy(dst, codes[i])
 
 
 # -------------------------

@@ -2,6 +2,7 @@ import importlib
 from safetensors import safe_open
 from safetensors.torch import save_file
 from dataclasses import dataclass
+import torch
 
 
 @dataclass
@@ -70,3 +71,19 @@ def load_safetensors(ckpt_path):
 def save_model_safetensors(model, ckpt_path):
     tensors = {k: v for k, v in model.state_dict().items()}
     save_file(tensors, ckpt_path)
+
+
+def load_state_dict(model: torch.nn.Module, ckpt_path: str):
+    """
+    Supports:
+      - train_state.pt with key 'model'
+      - raw state_dict
+    """
+    sd = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if isinstance(sd, dict) and "model" in sd and isinstance(sd["model"], dict):
+        model.load_state_dict(sd["model"], strict=True)
+    elif isinstance(sd, dict):
+        # raw state dict
+        model.load_state_dict(sd, strict=True)
+    else:
+        raise ValueError(f"Unsupported checkpoint format from {ckpt_path}")

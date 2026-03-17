@@ -1,262 +1,169 @@
-""" Search for the optimal cfg weights for the given model.
-    First using 10k samples to find the optimal value, then run on 50k samples to report.
-"""
+import os
+import json
+import argparse
+from typing import List
+
+import numpy as np
 import torch
+from omegaconf import OmegaConf
+from torch.utils.data import DataLoader
+from torchvision import transforms
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
-import torch.nn.functional as F
-import torch.distributed as dist
-from omegaconf import OmegaConf
-import json
-from tqdm import tqdm
-import os
-from PIL import Image
-import numpy as np
-import math
-import argparse
+
 import sys
 sys.path.append("./")
+
+from RandAR.utils.instantiation import instantiate_from_config
+from RandAR.eval.fid import eval_fid
+
 from RandAR.dataset.builder import build_dataset
-from RandAR.utils.distributed import init_distributed_mode, is_main_process
-from RandAR.dataset.augmentation import center_crop_arr
-from RandAR.util import instantiate_from_config, load_safetensors
-from RandAR.eval.fid import compute_fid
+from RandAR.utils.instantiation import load_state_dict
+
+def save_results(results: dict, path: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(results, f, indent=2)
 
 
-def create_npz_from_sample_folder(sample_dir, num=50_000):
-    """
-    Builds a single .npz file from a folder of .png samples.
-    """
-    samples = []
-    for i in tqdm(range(num), desc="Building .npz file from samples"):
-        sample_pil = Image.open(f"{sample_dir}/{i:06d}.png")
-        sample_np = np.asarray(sample_pil).astype(np.uint8)
-        samples.append(sample_np)
-    samples = np.stack(samples)
-    assert samples.shape == (num, samples.shape[1], samples.shape[2], 3)
-    npz_path = f"{sample_dir}.npz"
-    np.savez(npz_path, arr_0=samples)
-    print(f"Saved .npz file to {npz_path} [shape={samples.shape}].")
-    return npz_path
+def main(args):
+    torch.set_grad_enabled(False)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-def sample_and_eval(tokenizer, gpt_model, cfg_scale, args, device, total_samples):
-    # Setup DDP:
-    dist.init_process_group("nccl")
-    rank = dist.get_rank()
-    device = rank % torch.cuda.device_count()
-    seed = args.global_seed * dist.get_world_size() + rank
-    torch.manual_seed(seed)
-    torch.cuda.set_device(device)
-    print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
+    config = OmegaConf.load(args.config)
 
-
-    if rank == 0:
-        print(f"Total number of images that will be sampled: {total_samples}")
-    assert (
-        total_samples % dist.get_world_size() == 0
-    ), "total_samples must be divisible by world_size"
-    samples_needed_this_gpu = int(total_samples // dist.get_world_size())
-    assert (
-        samples_needed_this_gpu % args.per_proc_batch_size == 0
-    ), "samples_needed_this_gpu must be divisible by the per-GPU batch size"
-
-    folder_name = (
-        f"{args.exp_name}-{args.ckpt_string_name}-size-{args.image_size}-size-{args.image_size_eval}-"
-        f"cfg-{cfg_scale:.2f}-seed-{args.global_seed}-num-{total_samples}"
+    test_dataset = build_dataset(
+        is_train=False,
+        args=args,
+        transform=transforms.ToTensor(),
     )
-    sample_folder_dir = f"{args.sample_dir}/{folder_name}"
 
-    if rank == 0:
-        os.makedirs(sample_folder_dir, exist_ok=True)
-        print(f"Saving .png samples at {sample_folder_dir}")
-    dist.barrier()
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=False,
+        persistent_workers=(args.num_workers > 0),
+    )
 
-    iterations = int(samples_needed_this_gpu // args.per_proc_batch_size)
-    pbar = range(iterations)
-    pbar = tqdm(pbar) if rank == 0 else pbar
-    total = 0
+    tokenizer = instantiate_from_config(config.tokenizer).to(device)
+    tokenizer.load_state_dict(torch.load(args.vq_ckpt, map_location=device))
+    tokenizer.eval()
 
-    rank = dist.get_rank()
-    seed = args.global_seed * dist.get_world_size() + rank
-    torch.manual_seed(seed)
+    model = instantiate_from_config(config.ar_model).to(device)
+    load_state_dict(model, args.ar_ckpt)
+    model.eval()
 
-    global_batch_size = args.per_proc_batch_size * dist.get_world_size()
-    
-    cur_iter = 0
-    for _ in pbar:
-        c_indices = torch.randint(0, args.num_classes, (args.per_proc_batch_size,), device=device)
-        cfg_scales = (1.0, cfg_scale)
-    
-        indices = gpt_model.generate(
-            cond=c_indices,
-            token_order=None,
-            cfg_scales=cfg_scales,
-            num_inference_steps=args.num_inference_steps,
+    cfg_scales_search = [float(cfg_scale) for cfg_scale in args.cfg_scales_search.split(",")]
+    cfg_scales = np.arange(cfg_scales_search[0], cfg_scales_search[1] + 1e-4, float(args.cfg_scales_interval))
+    print(f"CFG scales to evaluate: {cfg_scales}")
+
+    results = {
+        "config": args.config,
+        "ar_ckpt": args.ar_ckpt,
+        "vq_ckpt": args.vq_ckpt,
+        "order_mode_for_gen": args.order_mode_for_gen,
+        "num_fid_samples": args.num_fid_samples,
+        "image_size": args.image_size,
+        "temperature": args.temperature,
+        "top_k": args.top_k,
+        "top_p": args.top_p,
+        "batch_size": args.batch_size,
+        "num_workers": args.num_workers,
+        "seed": args.seed,
+        "search": [],
+        "best": None,
+    }
+
+    best_cfg = None
+    best_fid = float("inf")
+
+    for cfg_scale in cfg_scales:
+        print("=" * 80)
+        print(f"Evaluating cfg_scale = {cfg_scale}")
+
+        fid_value = eval_fid(
+            model=model,
+            tokenizer=tokenizer,
+            test_loader=test_loader,
+            device=device,
+            image_size=args.image_size,
+            num_samples=args.num_fid_samples,
+            order_mode_for_gen=args.order_mode_for_gen,
+            cfg_scale=cfg_scale,
             temperature=args.temperature,
             top_k=args.top_k,
             top_p=args.top_p,
         )
+        fid_value = float(fid_value)
 
-        samples = tokenizer.decode_codes_to_img(indices, args.image_size_eval)
-    
-        for i, sample in enumerate(samples):
-            index = i * dist.get_world_size() + rank + total
-            Image.fromarray(sample).save(f"{sample_folder_dir}/{index:06d}.png")
-        total += global_batch_size
-        cur_iter += 1
-        # I use this line to look at the initial images to check the correctness
-        # comment this out if you want to generate more
-        if args.debug:
-            import pdb; pdb.set_trace()
-
-        # Make sure all processes have finished saving their samples before attempting to convert to .npz
-    dist.barrier()
-    if rank == 0:
-        sample_path = create_npz_from_sample_folder(sample_folder_dir, total_samples)
-        print("Done.")
-    dist.barrier()
-    dist.destroy_process_group()
-
-    fid, sfid, IS, precision, recall = compute_fid(args.ref_path, sample_path)
-    return fid, sfid, IS, precision, recall
-
-
-def main(args):
-    # Setup PyTorch:
-    assert (
-        torch.cuda.is_available()
-    ), "Sampling with DDP requires at least one GPU. sample.py supports CPU-only usage"
-    torch.set_grad_enabled(False)
-
-    # Setup DDP:
-    dist.init_process_group("nccl")
-    rank = dist.get_rank()
-    device = rank % torch.cuda.device_count()
-    seed = args.global_seed * dist.get_world_size() + rank
-    torch.manual_seed(seed)
-    torch.cuda.set_device(device)
-    print(f"Starting rank={rank}, seed={seed}, world_size={dist.get_world_size()}.")
-
-    config = OmegaConf.load(args.config)
-    # create and load model
-    tokenizer = instantiate_from_config(config.tokenizer).to(device).eval()
-    ckpt = torch.load(args.vq_ckpt, map_location="cpu")
-    if 'model' in ckpt:
-        state_dict = ckpt['model']
-    else:
-        state_dict = ckpt
-    tokenizer.load_state_dict(state_dict)
-
-    # create and load gpt model
-    precision = {"none": torch.float32, "bf16": torch.bfloat16, "fp16": torch.float16}[
-        args.precision
-    ]
-    latent_size = args.image_size // args.downsample_size
-    gpt_model = instantiate_from_config(config.ar_model).to(device=device, dtype=precision)
-    model_weight = load_safetensors(args.gpt_ckpt)
-    gpt_model.load_state_dict(model_weight, strict=True)
-    gpt_model.eval()
-
-    # Create folder to save samples:
-    ckpt_string_name = (
-        os.path.basename(args.gpt_ckpt)
-        .replace(".pth", "")
-        .replace(".pt", "")
-        .replace(".safetensors", "")
-    )
-    args.ckpt_string_name = ckpt_string_name
-
-    if rank == 0:
-        os.makedirs(args.sample_dir, exist_ok=True)
-
-    # Figure out how many samples we need to generate on each GPU and how many iterations we need to run:
-    n = args.per_proc_batch_size
-    global_batch_size = n * dist.get_world_size()
-
-    dist.barrier()
-    dist.destroy_process_group()
-    
-    # To make things evenly-divisible, we'll sample a bit more than we need and then discard the extra samples:
-    total_samples = int(math.ceil(args.num_fid_samples_search / global_batch_size) * global_batch_size)
-
-    # CFG scales to be searched
-    eval_results = {}
-    cfg_scales_search = args.cfg_scales_search.split(",")
-    cfg_scales_search = [float(cfg_scale) for cfg_scale in cfg_scales_search]
-    cfg_scales_interval = float(args.cfg_scales_interval)
-    cfg_scales_list = np.arange(cfg_scales_search[0], cfg_scales_search[1] + 1e-4, cfg_scales_interval)
-    print(f"CFG scales to be searched: {cfg_scales_list}")
-
-    result_file_name = (f"{args.results_path}/{args.exp_name}-{ckpt_string_name}-"
-                        f"size-{args.image_size}-size-{args.image_size_eval}-search.json")
-
-    # run throught the CFG scales
-    for cfg_scale in cfg_scales_list:
-        fid, sfid, IS, precision, recall = sample_and_eval(
-            tokenizer, gpt_model, cfg_scale, args, device, total_samples)
-        eval_results[f"{cfg_scale:.2f}"] = {
-            "fid": fid,
-            "sfid": sfid,
-            "IS": IS,
-            "precision": precision,
-            "recall": recall
+        entry = {
+            "cfg_scale": cfg_scale,
+            "fid": fid_value,
         }
-        print(f"Eval results for CFG scale {cfg_scale:.2f}: {eval_results[f'{cfg_scale:.2f}']}")
+        results["search"].append(entry)
 
-        with open(result_file_name, "w") as f:
-            json.dump(eval_results, f)
-    
-    # report the results
-    total_samples = int(math.ceil(args.num_fid_samples_report / global_batch_size) * global_batch_size)
-    optimal_cfg_scale = float(min(eval_results, key=lambda x: eval_results[x]["fid"]))
-    fid, sfid, IS, precision, recall = sample_and_eval(
-        tokenizer, gpt_model, optimal_cfg_scale, args, device, total_samples)
-    
-    print(f"Optimal CFG scale: {optimal_cfg_scale:.2f}")
-    print(f"Eval results for optimal CFG scale: {fid, sfid, IS, precision, recall}")
-    eval_results[f"{optimal_cfg_scale:.2f}-report"] = {
-        "fid": fid,
-        "sfid": sfid,
-        "IS": IS,
-        "precision": precision,
-        "recall": recall
-    }
+        print(f"cfg_scale={cfg_scale:.4f} -> FID={fid_value:.6f}")
 
-    with open(result_file_name, "w") as f:
-        json.dump(eval_results, f)
+        if fid_value < best_fid:
+            best_fid = fid_value
+            best_cfg = cfg_scale
+
+        results["best"] = {
+            "cfg_scale": best_cfg,
+            "fid": best_fid,
+        }
+
+        if args.results_path:
+            save_results(results, args.results_path)
+
+    print("=" * 80)
+    print("Search finished.")
+    print(f"Best cfg_scale: {best_cfg}")
+    print(f"Best FID: {best_fid:.6f}")
+
+    if args.results_path:
+        save_results(results, args.results_path)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # sample results
-    parser.add_argument("--config", type=str, default="configs/randar/randar_xl_0.7b.yaml")
-    parser.add_argument("--exp-name", type=str, required=True)
-    parser.add_argument("--gpt-ckpt", type=str, default=None)
-    parser.add_argument("--gpt-type", type=str, choices=["c2i", "t2i"], default="c2i")
-    parser.add_argument("--cls-token-num", type=int, default=1, help="max token number of condition input",)
-    parser.add_argument("--precision", type=str, default="bf16", choices=["none", "fp16", "bf16"])
-    parser.add_argument("--compile", action="store_true", default=True)
-    parser.add_argument("--vq-ckpt", type=str, default=None, help="ckpt path for vq model")
-    parser.add_argument("--image-size", type=int, choices=[128, 256, 384, 512], default=256)
-    parser.add_argument("--image-size-eval", type=int, choices=[128, 256, 384, 512], default=256)
-    parser.add_argument("--downsample-size", type=int, choices=[8, 16], default=16)
-    parser.add_argument("--num-classes", type=int, default=1000)
-    parser.add_argument("--cfg-scales-search", type=str, default="2.0, 8.0")
-    parser.add_argument("--cfg-scales-interval", type=float, default=0.2)
-    parser.add_argument("--sample-dir", type=str, default="/tmp")
-    parser.add_argument("--num-inference-steps", type=int, default=88)
-    parser.add_argument("--per-proc-batch-size", type=int, default=32)
-    parser.add_argument("--num-fid-samples-search", type=int, default=10000)
-    parser.add_argument("--num-fid-samples-report", type=int, default=50000)
-    parser.add_argument("--global-seed", type=int, default=0)
-    parser.add_argument("--top-k", type=int, default=0, help="top-k value to sample with")
-    parser.add_argument("--temperature", type=float, default=1.0, help="temperature value to sample with")
-    parser.add_argument("--top-p", type=float, default=1.0, help="top-p value to sample with")
-    parser.add_argument("--debug", action="store_true", default=False)
-    parser.add_argument("--ref-path", type=str, default="/tmp/VIRTUAL_imagenet256_labeled.npz")
-    # output results
-    parser.add_argument("--results-path", type=str, default="./results")
+
+    # required
+    parser.add_argument("--config", type=str, default="configs/randar_cifar10.yaml")
+    parser.add_argument("--ar_ckpt", type=str, default="results/2026-02-28_19-19-19_bs_512_lr_0.0004/checkpoints/iters_00024000/train_state.pt")
+    parser.add_argument("--dataset", type=str, default="latent")
+    parser.add_argument("--data-path", type=str, default="data/latents_cifar_10_test/cifar10-vq-vae-512-32_codes")
+
+    # optional tokenizer checkpoint
+    parser.add_argument("--vq_ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")
+
+    # generation / eval setup
+    parser.add_argument("--order_mode_for_gen", type=str, default="raster", choices=["raster", "random", "config"])
+    parser.add_argument("--num_fid_samples", type=int, default=2000)
+    parser.add_argument("--image_size", type=int, default=32)
+    parser.add_argument("--temperature", type=float, default=1.0)
+    parser.add_argument("--top_k", type=int, default=0)
+    parser.add_argument("--top_p", type=float, default=1.0)
+
+    # search setup
+    parser.add_argument("--cfg-scales-search", type=str, default="1.0, 4.0")
+    parser.add_argument("--cfg-scales-interval", type=float, default=0.5)
+
+    # dataloader
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--num_workers", type=int, default=0)
+
+    # misc
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--results_path", type=str, default="results/2026-02-28_19-19-19_bs_512_lr_0.0004/search_cfg.json")
+
     args = parser.parse_args()
     main(args)

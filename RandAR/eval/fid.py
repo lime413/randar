@@ -85,7 +85,7 @@ def eval_fid(
         gen_tokens = model.generate(
             cond=cond,
             token_order=token_order,                       # can be None; model will create its own
-            cfg_scales=(cfg_scale, cfg_scale),
+            cfg_scales=(1.0, cfg_scale),
             num_inference_steps=-1,                        # fully autoregressive; avoids ambiguity
             temperature=temperature,
             top_k=top_k,

@@ -1,3 +1,15 @@
+"""
+Teacher-forced conditional evaluation.
+
+Computes:
+  - NLL/token
+  - Perplexity
+  - Token accuracy
+
+CFG is not used here, because this function does not sample with model.generate().
+It evaluates next-token prediction under teacher forcing.
+"""
+
 import inspect
 import math
 from typing import Tuple, Optional

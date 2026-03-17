@@ -480,7 +480,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--config", type=str, default="configs/randar_cifar10_random_order.yaml")
+    parser.add_argument("--config", type=str, default="configs/randar_cifar10.yaml")
     parser.add_argument("--results-dir", type=str, default="results")
 
     parser.add_argument("--image-size", type=int, choices=[32, 128, 256], default=32)
@@ -495,7 +495,7 @@ if __name__ == "__main__":
     parser.add_argument("--keep-last-k", type=int, default=1)
     parser.add_argument("--mixed-precision", type=str, default="bf16", choices=["none", "fp16", "bf16"])
 
-    parser.add_argument("--exp_name", type=str, default=None)
+    parser.add_argument("--exp_name", type=str, default="2026-02-28_19-19-19_bs_512_lr_0.0004")
 
     # Tokenizer ckpt
     parser.add_argument("--vq-ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")

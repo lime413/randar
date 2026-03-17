@@ -480,14 +480,14 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--config", type=str, default="configs/randar_cifar10.yaml")
+    parser.add_argument("--config", type=str, default="configs/randar_cifar10_random_order.yaml")
     parser.add_argument("--results-dir", type=str, default="results")
 
     parser.add_argument("--image-size", type=int, choices=[32, 128, 256], default=32)
     parser.add_argument("--num-classes", type=int, default=10)
 
     # Training
-    parser.add_argument("--max-iters", type=int, default=40000)
+    parser.add_argument("--max-iters", type=int, default=100000)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--log-every", type=int, default=20)
@@ -508,8 +508,8 @@ if __name__ == "__main__":
     # Visualization
     parser.add_argument("--visualize-every", type=int, default=1000)
     parser.add_argument("--visualize-num", type=int, default=16)
-    parser.add_argument("--fid-every", type=int, default=1000)         # 10000
-    parser.add_argument("--fid-num-samples", type=int, default=5000)    # 5000
+    parser.add_argument("--fid-every", type=int, default=1000)
+    parser.add_argument("--fid-num-samples", type=int, default=5000)
     parser.add_argument("--fid-batch", type=int, default=128)
 
     # ClearML

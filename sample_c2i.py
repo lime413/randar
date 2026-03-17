@@ -20,7 +20,7 @@ sys.path.append("./")
 from RandAR.dataset.builder import build_dataset
 from RandAR.utils.distributed import init_distributed_mode, is_main_process
 from RandAR.dataset.augmentation import center_crop_arr
-from RandAR.util import instantiate_from_config, load_safetensors
+from RandAR.utils.instantiation import instantiate_from_config, load_safetensors
 
 
 def create_npz_from_sample_folder(sample_dir, num=50_000):

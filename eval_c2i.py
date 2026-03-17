@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 
-from RandAR.util import instantiate_from_config
+from RandAR.utils.instantiation import instantiate_from_config
 from RandAR.dataset.builder import build_dataset
 from RandAR.eval.fid import eval_fid, is_perfect_square
 from RandAR.eval.nll_ppl_acc import eval_nll_ppl_acc

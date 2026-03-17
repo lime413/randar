@@ -14,7 +14,7 @@ from clearml import Task, OutputModel
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-from RandAR.util import instantiate_from_config
+from RandAR.utils.instantiation import instantiate_from_config
 from RandAR.dataset.builder import build_dataset
 from RandAR.utils.visualization import make_grid
 from RandAR.utils.logger import create_logger

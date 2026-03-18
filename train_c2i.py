@@ -95,10 +95,10 @@ def main(args):
         cml_logger = task.get_logger()
         output_model = OutputModel(task=task, framework="PyTorch")
 
-    cml_logger.report_text(f"Experiment directory: {experiment_dir}")
-    cml_logger.report_text(f"Checkpoint directory: {checkpoint_dir}")
-    cml_logger.report_text(f"Device: {device}")
-    cml_logger.report_text(f"Seed: {config.global_seed}")
+        cml_logger.report_text(f"Experiment directory: {experiment_dir}")
+        cml_logger.report_text(f"Checkpoint directory: {checkpoint_dir}")
+        cml_logger.report_text(f"Device: {device}")
+        cml_logger.report_text(f"Seed: {config.global_seed}")
 
     # -------------------------
     # Dataset / Dataloader
@@ -123,16 +123,18 @@ def main(args):
     )
     data_loader = cycle(data_loader)
 
-    cml_logger.report_text(f"Dataset contains {len(dataset)} samples.")
-    cml_logger.report_text(f"Per-step batch size (on cuda:0): {per_gpu_batch_size}")
-    cml_logger.report_text(f"Grad accumulation steps: {grad_accum}")
-    cml_logger.report_text(f"Effective global batch size: {per_gpu_batch_size * grad_accum}")
+    if args.clearml:
+        cml_logger.report_text(f"Dataset contains {len(dataset)} samples.")
+        cml_logger.report_text(f"Per-step batch size (on cuda:0): {per_gpu_batch_size}")
+        cml_logger.report_text(f"Grad accumulation steps: {grad_accum}")
+        cml_logger.report_text(f"Effective global batch size: {per_gpu_batch_size * grad_accum}")
 
     # -------------------------
     # Model
     # -------------------------
     model = instantiate_from_config(config.ar_model).to(device)
-    cml_logger.report_text(f"GPT Parameters: {sum(p.numel() for p in model.parameters()):,}")
+    if args.clearml:
+        cml_logger.report_text(f"GPT Parameters: {sum(p.numel() for p in model.parameters()):,}")
     model.train()
 
     # -------------------------
@@ -173,20 +175,25 @@ def main(args):
 
         ckpt_file = os.path.join(ckpt_dir, "train_state.pt")
         if os.path.exists(ckpt_file):
-            cml_logger.report_text(f"Resuming from {ckpt_file}")
+            if args.clearml:
+                cml_logger.report_text(f"Resuming from {ckpt_file}")
             state = torch.load(ckpt_file, map_location="cpu", weights_only=False)
             model.load_state_dict(state["model"])
             optimizer.load_state_dict(state["optimizer"])
             lr_scheduler.load_state_dict(state["lr_scheduler"])
             train_steps = int(state["train_steps"])
+            best_loss = float(state.get("best_loss", float("inf")))
+            no_improve_steps = int(state.get("no_improve_steps", 0))
         else:
-            cml_logger.report_text(f"Found {ckpt_dir} but no train_state.pt; starting from scratch.")
+            if args.clearml:
+                cml_logger.report_text(f"Found {ckpt_dir} but no train_state.pt; starting from scratch.")
 
     # -------------------------
     # Training loop
     # -------------------------
     total_iters = int(config.max_iters)
-    cml_logger.report_text(f"Starting training from iteration {train_steps} to {total_iters}")
+    if args.clearml:
+        cml_logger.report_text(f"Starting training from iteration {train_steps} to {total_iters}")
 
     log_every = int(args.log_every)
     ckpt_every = int(args.ckpt_every)
@@ -195,6 +202,12 @@ def main(args):
     running_loss = 0.0
     running_grad_norm = 0.0
     start_time = time.time()
+
+    if "best_loss" not in locals():
+        best_loss = float("inf")
+    if "no_improve_steps" not in locals():
+        no_improve_steps = 0
+    should_stop = False
 
     scaler = None
     use_amp = (args.mixed_precision in ["fp16", "bf16"])
@@ -325,6 +338,28 @@ def main(args):
         # -------------------------
         if train_steps % log_every == 0:
             avg_loss = running_loss / log_every
+
+            if args.early_stop_patience > 0:
+                if avg_loss < best_loss - args.early_stop_min_delta:
+                    best_loss = avg_loss
+                    no_improve_steps = 0
+                else:
+                    no_improve_steps += log_every
+
+            if args.clearml and args.early_stop_patience > 0:
+                cml_logger.report_text(
+                    f"Early stopping | best_loss={best_loss:.6f} | "
+                    f"no_improve_iters={no_improve_steps}/{args.early_stop_patience}"
+                )
+
+            if args.early_stop_patience > 0 and no_improve_steps >= args.early_stop_patience:
+                if args.clearml:
+                    cml_logger.report_text(
+                        f"Early stopping triggered at step {train_steps:08d}. "
+                        f"Best loss: {best_loss:.6f}"
+                    )
+                should_stop = True
+            
             avg_grad = running_grad_norm / log_every
             avg_ppl = math.exp(min(avg_loss, 20.0))
 
@@ -333,10 +368,11 @@ def main(args):
             start_time = time.time()
 
             lr = lr_scheduler.get_last_lr()[0]
-            cml_logger.report_text(
-                f"Step {train_steps:08d} | Loss {avg_loss:.4f} | Time left {avg_time* (total_iters - train_steps):.0f}s | "
-                f"Grad Norm {avg_grad:.4f} | LR {lr:.6f}"
-            )
+            if args.clearml:
+                cml_logger.report_text(
+                    f"Step {train_steps:08d} | Loss {avg_loss:.4f} | Time left {avg_time* (total_iters - train_steps):.0f}s | "
+                    f"Grad Norm {avg_grad:.4f} | LR {lr:.6f}"
+                )
 
             if args.clearml:
                 cml_logger.report_scalar("train", "loss_nll", iteration=train_steps, value=avg_loss)
@@ -361,8 +397,8 @@ def main(args):
                 batch_size=args.fid_batch,
                 image_size=args.image_size,
             )
-            cml_logger.report_text(f"Step {train_steps:08d} | FID {fid_value:.3f}")
             if args.clearml:
+                cml_logger.report_text(f"Step {train_steps:08d} | FID {fid_value:.3f}")
                 cml_logger.report_scalar("eval", "FID", iteration=train_steps, value=fid_value)
 
         # -------------------------
@@ -437,11 +473,14 @@ def main(args):
                 "lr_scheduler": lr_scheduler.state_dict(),
                 "train_steps": train_steps,
                 "config": dict(config),
+                "best_loss": best_loss,
+                "no_improve_steps": no_improve_steps,
             }
 
             weights_file = os.path.join(ckpt_path, "train_state.pt")
             torch.save(state, weights_file)
-            cml_logger.report_text(f"Saved Iter {train_steps} checkpoint to {ckpt_path}")
+            if args.clearml:
+                cml_logger.report_text(f"Saved Iter {train_steps} checkpoint to {ckpt_path}")
 
             if args.clearml:
                 # Track latest checkpoint as a ClearML "model" snapshot
@@ -459,6 +498,35 @@ def main(args):
                         if save_iter not in [50000, 100000, 200000, 300000]:
                             shutil.rmtree(os.path.join(checkpoint_dir, ckpt_dir), ignore_errors=True)
 
+        # -------------------------
+        # Early stopping
+        # -------------------------
+        if should_stop:
+            ckpt_path = os.path.join(checkpoint_dir, f"iters_{train_steps:08d}_early_stop")
+            os.makedirs(ckpt_path, exist_ok=True)
+
+            state = {
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "lr_scheduler": lr_scheduler.state_dict(),
+                "train_steps": train_steps,
+                "config": dict(config),
+                "best_loss": best_loss,
+                "no_improve_steps": no_improve_steps,
+            }
+
+            weights_file = os.path.join(ckpt_path, "train_state.pt")
+            torch.save(state, weights_file)
+            if args.clearml:
+                cml_logger.report_text(f"Saved early-stop checkpoint to {ckpt_path}")
+                output_model.update_weights(
+                    weights_filename=weights_file,
+                    iteration=train_steps,
+                    update_comment="early stopping checkpoint",
+                )
+
+            break
+
     # final save
     final_ckpt_dir = os.path.join(checkpoint_dir, f"iters_{train_steps:08d}_final")
     os.makedirs(final_ckpt_dir, exist_ok=True)
@@ -468,13 +536,17 @@ def main(args):
         "lr_scheduler": lr_scheduler.state_dict(),
         "train_steps": train_steps,
         "config": dict(config),
+        "best_loss": best_loss,
+        "no_improve_steps": no_improve_steps,
     }
     torch.save(state, os.path.join(final_ckpt_dir, "train_state.pt"))
-    cml_logger.report_text(f"Saved Final Iter {train_steps} checkpoint to {final_ckpt_dir}")
+    if args.clearml:
+        cml_logger.report_text(f"Saved Final Iter {train_steps} checkpoint to {final_ckpt_dir}")
 
     if args.clearml:
         task.close()
-    cml_logger.report_text("Training Done.")
+    if args.clearml:
+        cml_logger.report_text("Training Done.")
 
 
 if __name__ == "__main__":
@@ -494,6 +566,9 @@ if __name__ == "__main__":
     parser.add_argument("--ckpt-every", type=int, default=1000)
     parser.add_argument("--keep-last-k", type=int, default=1)
     parser.add_argument("--mixed-precision", type=str, default="bf16", choices=["none", "fp16", "bf16"])
+
+    parser.add_argument("--early-stop-patience", type=int, default=2000)
+    parser.add_argument("--early-stop-min-delta", type=float, default=0.001)
 
     parser.add_argument("--exp_name", type=str, default="2026-02-28_19-19-19_bs_512_lr_0.0004")
 

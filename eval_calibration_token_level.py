@@ -65,7 +65,7 @@ def main():
     p.add_argument(
         "--data-path",
         type=str,
-        default="data/latents_cifar_10_test/cifar10-vq-vae-512-32_codes",
+        default="data/latents/cifar10/test/cifar10-vq-vae-512-32_codes",
     )
     p.add_argument("--num-workers", type=int, default=0)
     p.add_argument("--batch-size", type=int, default=128)
@@ -74,12 +74,12 @@ def main():
         "--order",
         type=str,
         choices=["config", "raster", "random"],
-        default="raster",
+        default="config",
         help="Teacher-forced order control. 'config' means model.position_order is used.",
     )
     p.add_argument("--num-bins", type=int, default=15)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--output-dir", type=str, default="results/calibration_clean")
+    p.add_argument("--output-dir", type=str, default="results/random_order/token_calibration")
 
     args = p.parse_args()
 

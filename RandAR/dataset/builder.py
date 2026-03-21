@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 def build_dataset(is_train, args, transform):
     if args.dataset == "imagenet":
@@ -15,6 +16,19 @@ def build_dataset(is_train, args, transform):
             train=is_train,
             transform=transform,
             download=False,
+        )
+        dataset.nb_classes = 10
+
+    elif args.dataset == "cifar10c":
+        from .cifar10 import CIFAR10CSeverityDataset
+
+        p = Path(args.data_path)
+        parent_dir = p.parent
+
+        dataset = CIFAR10CSeverityDataset(
+            severity_dir=args.data_path,
+            labels_path=os.path.join(parent_dir, "labels.npy"),
+            transform=transform,
         )
         dataset.nb_classes = 10
 

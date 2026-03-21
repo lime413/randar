@@ -38,7 +38,7 @@ def load_tokenizer_from_yaml(args: argparse.Namespace, device: torch.device) -> 
 # Transform pipeline
 # -------------------------
 def build_image_transform(args: argparse.Namespace) -> transforms.Compose:
-    if args.dataset == "cifar10":
+    if args.dataset == "cifar10" or args.dataset == "cifar10c":
         return transforms.Compose([
             transforms.Resize(args.image_size),
             transforms.ToTensor(),
@@ -117,7 +117,7 @@ def main(args: argparse.Namespace) -> None:
             "labels": y.detach().cpu().numpy().astype(np.int64, copy=False),
             "indices": index.detach().cpu().numpy().astype(np.int64, copy=False),
         }
-        _save_payload(payload, out_dir)
+        _save_payload(payload, out_dir) 
 
     pbar.close()
     print(f"Done. Saved latents to: {out_dir}")
@@ -132,11 +132,11 @@ if __name__ == "__main__":
     parser.add_argument("--tokenizer-name", type=str, default="vq-vae-512")
     parser.add_argument("--vq-ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")
 
-    parser.add_argument("--dataset", type=str, default="cifar10")
-    parser.add_argument("--data-path", type=str, default="data/cifar10")
-    parser.add_argument("--latents-path", type=str, default="data/latents_cifar_10")
+    parser.add_argument("--dataset", type=str, default="cifar10c", choices=["cifar10", "cifar10c"])
+    parser.add_argument("--data-path", type=str, default="data/cifar10c-by-severity/severity_5")
+    parser.add_argument("--latents-path", type=str, default="data/latents/cifar10c/severity_5")
 
-    parser.add_argument("--is_train", type=bool, default=True)
+    parser.add_argument("--is_train", type=bool, default=False)
 
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--image-size", type=int, choices=[32, 128, 256], default=32)

@@ -170,12 +170,12 @@ def main():
     p = argparse.ArgumentParser()
 
     p.add_argument("--config", type=str, default="configs/randar_cifar10.yaml")
-    p.add_argument("--ar_ckpt", type=str, default="results/2026-02-28_19-19-19_bs_512_lr_0.0004/checkpoints/iters_00024000/train_state.pt")
+    p.add_argument("--ar_ckpt", type=str, default="results/raster_order/2026-02-28_19-19-19_bs_512_lr_0.0004/checkpoints/iters_00027000/train_state.pt")
     p.add_argument("--vq_ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")
 
     # dataset
     p.add_argument("--dataset", type=str, default="latent")
-    p.add_argument("--data-path", type=str, default="data/latents_cifar_10_test/cifar10-vq-vae-512-32_codes")
+    p.add_argument("--data-path", type=str, default="data/latents/cifar10c/severity_1/cifar10c-vq-vae-512-32_codes")
     p.add_argument("--num-workers", type=int, default=0)
 
     # teacher-forced metrics
@@ -184,7 +184,7 @@ def main():
         "--order",
         type=str,
         choices=["config", "raster", "random"],
-        default="raster",
+        default="config",
         help="Teacher-forced order. 'config' means use model default behavior.",
     )
 
@@ -202,7 +202,7 @@ def main():
     p.add_argument(
         "--cfg-scales",
         type=parse_cfg_scales,
-        default=parse_cfg_scales("1.0,4.0"),
+        default=parse_cfg_scales("1.0"),
         help="Comma-separated CFG scales to evaluate, for example: '1.0,4.0'",
     )
     p.add_argument("--temperature", type=float, default=1.0)
@@ -211,7 +211,7 @@ def main():
 
     # misc
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--output-json", type=str, default="results/eval_metrics.json")
+    p.add_argument("--output-json", type=str, default="results/random_order/basic_eval_metrics.json")
 
     args = p.parse_args()
     evaluate_all(args)

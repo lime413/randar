@@ -328,9 +328,10 @@ class RandARTransformer(nn.Module):
         targets: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
         valid: Optional[torch.Tensor] = None,
+        shuffle_ratio: Optional[float] = None,
     ):
         if idx is not None and cond_idx is not None:
-            return self.forward_train(idx, cond_idx, token_order, input_pos, targets, mask, valid)
+            return self.forward_train(idx, cond_idx, token_order, input_pos, targets, mask, valid, shuffle_ratio)
         else:
             raise ValueError("idx and cond_idx cannot be both None")
         
@@ -341,7 +342,8 @@ class RandARTransformer(nn.Module):
                       input_pos: Optional[torch.Tensor] = None,
                       targets: Optional[torch.Tensor] = None,
                       mask: Optional[torch.Tensor] = None,
-                      valid: Optional[torch.Tensor] = None,):
+                      valid: Optional[torch.Tensor] = None,
+                      shuffle_ratio: Optional[float] = None, ):
         """ Args:
             idx: [bsz, seq_len] GT image tokens for teacher forcing
             cond_idx: [bsz, cls_token_num] Cls tokens
@@ -350,6 +352,7 @@ class RandARTransformer(nn.Module):
             targets: [bsz, seq_len] Target tokens for teacher forcing (default None)
             mask: [bsz, seq_len, seq_len] Causal mask for attention (default None)
             valid: [bsz, seq_len] Valid mask for loss calculation (default None)
+            shuffle_ratio: current shuffle_ratio based on ECE value in training loop for adaptive mode (optional)
         """
         # 1. Prepare orders
         bs = idx.shape[0]
@@ -363,6 +366,20 @@ class RandARTransformer(nn.Module):
             elif self.position_order == "raster":
                 token_order = torch.arange(self.block_size, device=idx.device)
                 token_order = token_order.unsqueeze(0).repeat(bs, 1)
+                token_order = token_order.contiguous()
+            elif self.position_order == "adaptive":
+                token_order = torch.arange(self.block_size, device=self.tok_embeddings.weight.device, dtype=torch.long)
+                token_order = token_order.unsqueeze(0).repeat(bs, 1)
+
+                for i in range(bs):
+                    num_to_shuffle = int(self.block_size * shuffle_ratio)
+                    
+                    if num_to_shuffle > 0:
+                        shuffle_indices = torch.randperm(self.block_size, device=idx.device)[:num_to_shuffle]
+                        shuffled_values = token_order[i, shuffle_indices][torch.randperm(num_to_shuffle, device=idx.device)]
+                        token_order[i, shuffle_indices] = shuffled_values
+
+
                 token_order = token_order.contiguous()
             else:
                 raise ValueError(f"Invalid position order: {self.position_order}")
@@ -489,6 +506,7 @@ class RandARTransformer(nn.Module):
         temperature: float = 1.0,
         top_k: int = 0,
         top_p: float = 1.0,
+        shuffle_ratio: Optional[float] = None,
     ):
         """ Args:
             cond: [bsz, seq_len] Conditional tokens
@@ -498,6 +516,7 @@ class RandARTransformer(nn.Module):
             temperature: float Temperature for sampling
             top_k: int Top-k for sampling
             top_p: float Top-p for sampling
+            shuffle_ratio: current shuffle_ratio based on ECE value in training loop for adaptive mode (optional)
         """
         bs = cond.shape[0]
         
@@ -509,6 +528,18 @@ class RandARTransformer(nn.Module):
             if self.position_order == "random":
                 for i in range(bs):
                     token_order[i] = token_order[i][torch.randperm(self.block_size)]
+            
+            elif self.position_order == "adaptive":
+
+                for i in range(bs):
+                    num_to_shuffle = int(self.block_size * shuffle_ratio)
+                    
+                    if num_to_shuffle > 0:
+                        shuffle_indices = torch.randperm(self.block_size, device=cond.device)[:num_to_shuffle]
+                        
+                        shuffled_values = token_order[i, shuffle_indices][torch.randperm(num_to_shuffle, device=cond.device)]
+                        token_order[i, shuffle_indices] = shuffled_values
+            
             token_order = token_order.contiguous()
         else:
             assert token_order.shape == (bs, self.block_size)

@@ -6,6 +6,7 @@ from datetime import datetime
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from omegaconf import OmegaConf
@@ -18,6 +19,7 @@ from RandAR.utils.instantiation import instantiate_from_config
 from RandAR.dataset.builder import build_dataset
 from RandAR.utils.visualization import make_grid
 from RandAR.utils.lr_scheduler import get_scheduler
+from RandAR.utils.latents import extract_latent_tokens
 
 from torchmetrics.image.fid import FrechetInceptionDistance
 import math
@@ -199,6 +201,10 @@ def main(args):
     ckpt_every = int(args.ckpt_every)
     visualize_every = int(args.visualize_every)
 
+    #calibration based on ECE
+    ece_every = int(args.ece_every)
+    shuffle_ratio = args.max_shuffle_ratio
+
     running_loss = 0.0
     running_grad_norm = 0.0
     start_time = time.time()
@@ -207,6 +213,9 @@ def main(args):
         best_loss = float("inf")
     if "no_improve_steps" not in locals():
         no_improve_steps = 0
+    if "best_ece" not in locals():
+        best_ece = float("inf")
+
     should_stop = False
 
     scaler = None
@@ -223,6 +232,129 @@ def main(args):
                 continue
             total += p.grad.data.norm(2).item()
         return total
+    
+
+    #ECE calculation localy
+    @torch.no_grad()
+    def compute_ece(
+        model,
+        tokenizer,
+        dataset,
+        device,
+        num_samples=5000,
+        batch_size=128,
+        num_bins=15
+    ):
+        """
+        Compute token-level Expected Calibration Error.
+        """
+        original_order = model.position_order
+        model.position_order = "raster"
+        model.eval()
+        
+        bin_counts = np.zeros(num_bins, dtype=np.int64)
+        bin_conf_sums = np.zeros(num_bins, dtype=np.float64)
+        bin_correct_sums = np.zeros(num_bins, dtype=np.float64)
+        
+        bin_edges = torch.linspace(0.0, 1.0, num_bins + 1, device=device)
+        
+        total_ce = 0.0
+        total_tokens = 0
+        total_correct = 0
+        total_confidence = 0.0
+        
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=0,
+            drop_last=False,
+            pin_memory=True,
+        )
+        
+        seen = 0
+        for batch in loader:
+            if seen >= num_samples:
+                break
+            
+            if len(batch) == 3:
+                tokens_raw, y, _ = batch
+            else:
+                tokens_raw, y = batch
+            
+            tokens = extract_latent_tokens(tokens_raw).to(device, non_blocking=True)
+            cond = y.to(device, non_blocking=True)
+            
+            B, T = tokens.shape
+            
+            # Forward pass
+            logits, _, _ = model(tokens, cond, targets=tokens, token_order=None)
+            
+            logits_flat = logits.reshape(-1, logits.size(-1))
+            targets_flat = tokens.reshape(-1)
+            
+            # Probabilities, confidence
+            probs_flat = F.softmax(logits_flat, dim=-1)
+            conf_flat, pred_flat = probs_flat.max(dim=-1)
+            correct_flat = (pred_flat == targets_flat).float()
+            
+            # metrics
+            ce = F.cross_entropy(logits_flat, targets_flat, reduction="sum")
+            total_ce += float(ce.item())
+            total_tokens += int(targets_flat.numel())
+            total_correct += int(correct_flat.sum().item())
+            total_confidence += float(conf_flat.sum().item())
+            
+            bin_ids = torch.bucketize(conf_flat, bin_edges[1:-1], right=False)
+            
+            for i in range(num_bins):
+                mask = (bin_ids == i)
+                cnt = int(mask.sum().item())
+                if cnt == 0:
+                    continue
+                
+                bin_counts[i] += cnt
+                bin_conf_sums[i] += float(conf_flat[mask].sum().item())
+                bin_correct_sums[i] += float(correct_flat[mask].sum().item())
+            
+            seen += B
+        
+        # ECE
+        total = int(bin_counts.sum())
+        ece = 0.0
+        if total > 0:
+            for i in range(num_bins):
+                if bin_counts[i] == 0:
+                    continue
+                acc_i = bin_correct_sums[i] / bin_counts[i]
+                conf_i = bin_conf_sums[i] / bin_counts[i]
+                ece += (bin_counts[i] / total) * abs(acc_i - conf_i)
+        
+        nll = total_ce / max(total_tokens, 1)
+        acc = total_correct / max(total_tokens, 1)
+        mean_conf = total_confidence / max(total_tokens, 1)
+        
+
+        model.position_order = original_order
+        model.train()
+        return {
+            "ece": float(ece),
+            "nll_per_token": float(nll),
+            "token_accuracy": float(acc),
+            "mean_confidence": float(mean_conf),
+            "overconfidence_gap": float(mean_conf - acc),
+        }
+
+    #helper for calculating the shuffle_ratio
+    def update_randomization_params(model, ece_metrics, ece_threshold, max_shuffle_ratio):
+        ece = ece_metrics["ece"]
+        
+        # ECE = 0 => shuffle_ratio = 0
+        # ECE = ece_threshold => shuffle_ratio = max_shuffle_ratio
+        # ECE > ece_threshold => shuffle_ratio = max_shuffle_ratio (cap)
+        shuffle_ratio = min(max_shuffle_ratio, (ece / ece_threshold) * max_shuffle_ratio)
+
+        return shuffle_ratio
     
     # local helper to compute FID score
     def compute_fid(model, tokenizer, dataset, device, num_samples, batch_size, image_size):
@@ -301,7 +433,7 @@ def main(args):
             cond = y.reshape(-1)
 
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
-                logits, loss, token_order = model(image_tokens, cond, targets=image_tokens)
+                logits, loss, token_order = model(image_tokens, cond, targets=image_tokens, shuffle_ratio = shuffle_ratio)
 
             if scaler is not None:
                 scaler.scale(loss / grad_accum).backward()
@@ -383,7 +515,44 @@ def main(args):
 
             running_loss = 0.0
             running_grad_norm = 0.0
-
+        # -------------------------
+        # ECE evaluation
+        # -------------------------
+        if ece_every > 0 and (train_steps % ece_every == 0):
+            ece_metrics = compute_ece(
+                model=model,
+                tokenizer=tokenizer,
+                dataset=dataset,  # change to validation later
+                device=device,
+                num_samples=args.ece_num_samples,
+                batch_size=args.ece_batch_size,
+                num_bins=15,
+            )
+            
+            # shuffle_ratio based on ECE
+            current_ece = ece_metrics["ece"]
+            new_shuffle_ratio = update_randomization_params(
+                model, 
+                ece_metrics, 
+                ece_threshold=args.ece_threshold,
+                max_shuffle_ratio=args.max_shuffle_ratio
+            )
+            
+            # save new shuffle_ratio
+            shuffle_ratio = new_shuffle_ratio
+            
+            if args.clearml:
+                cml_logger.report_text(
+                    f"Step {train_steps:08d} | ECE {current_ece:.4f} | "
+                    f"Acc {ece_metrics['token_accuracy']:.4f} | "
+                    f"Conf {ece_metrics['mean_confidence']:.4f} | "
+                    f"Shuffle Ratio {shuffle_ratio:.2f}"
+                )
+                cml_logger.report_scalar("eval", "ECE", iteration=train_steps, value=current_ece)
+                cml_logger.report_scalar("eval", "token_accuracy", iteration=train_steps, value=ece_metrics['token_accuracy'])
+                cml_logger.report_scalar("eval", "mean_confidence", iteration=train_steps, value=ece_metrics['mean_confidence'])
+                cml_logger.report_scalar("eval", "overconfidence_gap", iteration=train_steps, value=ece_metrics['overconfidence_gap'])
+                cml_logger.report_scalar("eval", "shuffle_ratio", iteration=train_steps, value=shuffle_ratio)
         # -------------------------
         # FID evaluation
         # -------------------------
@@ -475,6 +644,8 @@ def main(args):
                 "config": dict(config),
                 "best_loss": best_loss,
                 "no_improve_steps": no_improve_steps,
+                "best_ece": best_ece,  
+                "current_shuffle_ratio": shuffle_ratio,
             }
 
             weights_file = os.path.join(ckpt_path, "train_state.pt")
@@ -552,14 +723,14 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--config", type=str, default="configs/randar_cifar10.yaml")
+    parser.add_argument("--config", type=str, default="configs/randar_cifar10_adaptive.yaml")
     parser.add_argument("--results-dir", type=str, default="results")
 
     parser.add_argument("--image-size", type=int, choices=[32, 128, 256], default=32)
     parser.add_argument("--num-classes", type=int, default=10)
 
     # Training
-    parser.add_argument("--max-iters", type=int, default=100000)
+    parser.add_argument("--max-iters", type=int, default=95000)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--log-every", type=int, default=20)
@@ -567,10 +738,17 @@ if __name__ == "__main__":
     parser.add_argument("--keep-last-k", type=int, default=1)
     parser.add_argument("--mixed-precision", type=str, default="bf16", choices=["none", "fp16", "bf16"])
 
-    parser.add_argument("--early-stop-patience", type=int, default=2000)
+    parser.add_argument("--early-stop-patience", type=int, default=0)
     parser.add_argument("--early-stop-min-delta", type=float, default=0.001)
 
-    parser.add_argument("--exp_name", type=str, default="2026-02-28_19-19-19_bs_512_lr_0.0004")
+    #new ECE params
+    parser.add_argument('--ece-every', type=int, default=20)
+    parser.add_argument('--ece-num-samples', type=int, default=5000)
+    parser.add_argument('--ece-batch-size', type=int, default=128)
+    parser.add_argument('--ece-threshold', type=float, default=0.05)
+    parser.add_argument('--max-shuffle-ratio', type=float, default=0.5)
+
+    parser.add_argument("--exp_name", type=str, default="adaptive_tests")
 
     # Tokenizer ckpt
     parser.add_argument("--vq-ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")

@@ -32,12 +32,24 @@ def extract_latent_tokens(batch_x: torch.Tensor) -> torch.Tensor:
         return batch_x.long()
     raise ValueError(f"Unexpected latent x shape: {tuple(batch_x.shape)}")
 
-def make_token_order(batch_size: int, T: int, device: torch.device, mode: str) -> Optional[torch.Tensor]:
+def make_token_order(
+        batch_size: int,
+        T: int,
+        device: torch.device,
+        mode: str,
+        shuffle_ratio: Optional[float] = None,) -> Optional[torch.Tensor]:
     """
-    mode:
-      - "config": do not pass token_order (model decides internally by self.position_order)
-      - "raster": force raster order
-      - "random": force per-sample random permutation
+    Generate token order for RandAR-style training.
+    
+    Args:
+        batch_size: number of samples in batch
+        T: number of tokens (block_size)
+        device: torch device
+        mode: "config" | "raster" | "random" | "adaptive"
+        shuffle_ratio: fraction of tokens to shuffle (0.0–1.0), only used for "adaptive"
+    
+    Returns:
+        token_order: [B, T] permutation tensor, or None for "config" mode
     """
     if mode == "config":
         return None
@@ -45,6 +57,39 @@ def make_token_order(batch_size: int, T: int, device: torch.device, mode: str) -
         return torch.arange(T, device=device).unsqueeze(0).repeat(batch_size, 1)
     if mode == "random":
         return torch.stack([torch.randperm(T, device=device) for _ in range(batch_size)], dim=0)
+    
+    if mode == "adaptive":
+        if shuffle_ratio is None:
+            # Fallback to random if shuffle_ratio not provided
+            return torch.stack([torch.randperm(T, device=device) for _ in range(batch_size)], dim=0)
+        
+        if shuffle_ratio <= 0.0:
+            # Raster order
+            return torch.arange(T, device=device).unsqueeze(0).repeat(batch_size, 1)
+        
+        if shuffle_ratio >= 1.0:
+            # Fully random
+            return torch.stack([torch.randperm(T, device=device) for _ in range(batch_size)], dim=0)
+        
+        # Partial shuffling: shuffle only shuffle_ratio fraction of tokens
+        token_orders = []
+        for _ in range(batch_size):
+            perm = torch.arange(T, device=device)
+            num_to_shuffle = int(T * shuffle_ratio)
+            
+            if num_to_shuffle == 0:
+                token_orders.append(perm)
+            else:
+                
+                shuffle_indices = torch.randperm(T, device=device)[:num_to_shuffle]
+                
+                shuffled_values = perm[shuffle_indices][torch.randperm(num_to_shuffle, device=device)]
+                perm[shuffle_indices] = shuffled_values
+                
+                token_orders.append(perm)
+        
+        return torch.stack(token_orders, dim=0)
+    
     raise ValueError(f"Unknown order mode: {mode}")
 
 

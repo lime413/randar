@@ -1,6 +1,4 @@
 import importlib
-from safetensors import safe_open
-from safetensors.torch import save_file
 from dataclasses import dataclass
 import torch
 
@@ -61,6 +59,10 @@ def value_type(value):
 
 
 def load_safetensors(ckpt_path):
+    try:
+        from safetensors import safe_open
+    except ImportError:
+        raise ImportError("safetensors is required for loading safetensors checkpoints")
     tensors = dict()
     with safe_open(ckpt_path, framework="pt", device="cpu") as f:
         for k in f.keys():
@@ -69,6 +71,10 @@ def load_safetensors(ckpt_path):
 
 
 def save_model_safetensors(model, ckpt_path):
+    try:
+        from safetensors.torch import save_file
+    except ImportError:
+        raise ImportError("safetensors is required for saving safetensors checkpoints")
     tensors = {k: v for k, v in model.state_dict().items()}
     save_file(tensors, ckpt_path)
 

@@ -15,7 +15,7 @@ from clearml import Task, OutputModel
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 
-from RandAR.utils.instantiation import instantiate_from_config
+from RandAR.utils.instantiation import instantiate_from_config, load_state_dict
 from RandAR.dataset.builder import build_dataset
 from RandAR.utils.visualization import make_grid
 from RandAR.utils.lr_scheduler import get_scheduler
@@ -143,7 +143,7 @@ def main(args):
     # Tokenizer (CIFAR VQ-VAE)
     # -------------------------
     tokenizer = instantiate_from_config(config.tokenizer).to(device)
-    tokenizer.load_state_dict(torch.load(args.vq_ckpt, map_location=device))
+    load_state_dict(tokenizer, args.vq_ckpt)
     tokenizer.eval()
     for p in tokenizer.parameters():
         p.requires_grad_(False)

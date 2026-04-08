@@ -186,3 +186,4 @@ data/*
 !data/imagenet256_preprocessing.py
 !data/load_and_split_CIFAR10C.py
 !data/load_imagenet256.py
+tmp.py

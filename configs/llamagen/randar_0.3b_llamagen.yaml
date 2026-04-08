@@ -18,10 +18,14 @@ ar_model:
     zero_class_qk: True
     num_inference_steps: 88
   
+
 dataset:
-  target: RandAR.dataset.imagenet.INatLatentDataset
-  params:
-    root_dir: /tmp/imagenet-llamagen-adm-256_codes
+  name: imagenet256
+  image_size: 256
+  num_classes: 1000
+  batch_size: 64
+  num_workers: 8
+
 
 tokenizer:
   target: RandAR.model.tokenizer.VQModel
@@ -60,7 +64,7 @@ lr_scheduler:
 # training related parameters
 exp_name: "randar_0.3b"
 max_iters: 360000 # 100k firt
-global_batch_size: 1024
+global_batch_size: 64
 ema: False 
 ema_decay: 0.9999
 

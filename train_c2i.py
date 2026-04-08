@@ -723,7 +723,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--config", type=str, default="configs/randar_cifar10_adaptive.yaml")
+    parser.add_argument("--config", type=str, default="configs/llamagen/randar_0.3b_llamagen.yaml")
     parser.add_argument("--results-dir", type=str, default="results")
 
     parser.add_argument("--image-size", type=int, choices=[32, 128, 256], default=32)
@@ -742,26 +742,26 @@ if __name__ == "__main__":
     parser.add_argument("--early-stop-min-delta", type=float, default=0.001)
 
     #new ECE params
-    parser.add_argument('--ece-every', type=int, default=20)
+    parser.add_argument('--ece-every', type=int, default=0)
     parser.add_argument('--ece-num-samples', type=int, default=5000)
     parser.add_argument('--ece-batch-size', type=int, default=128)
     parser.add_argument('--ece-threshold', type=float, default=0.05)
     parser.add_argument('--max-shuffle-ratio', type=float, default=0.5)
 
-    parser.add_argument("--exp_name", type=str, default="adaptive_tests")
+    parser.add_argument("--exp_name", type=str, default="testing")
 
     # Tokenizer ckpt
-    parser.add_argument("--vq-ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")
+    parser.add_argument("--vq-ckpt", type=str, default="tokenizer_llamagen/vq_ds16_c2i.pt")
 
     # Data
     parser.add_argument("--dataset", type=str, default="latent")
-    parser.add_argument("--data-path", type=str, default="data/latents_cifar_10/cifar10-vq-vae-512-32_codes")
+    parser.add_argument("--data-path", type=str, default="data/imagenet256-splits/train")
     parser.add_argument("--debug", action="store_true")
 
     # Visualization
-    parser.add_argument("--visualize-every", type=int, default=1000)
+    parser.add_argument("--visualize-every", type=int, default=0)
     parser.add_argument("--visualize-num", type=int, default=16)
-    parser.add_argument("--fid-every", type=int, default=1000)
+    parser.add_argument("--fid-every", type=int, default=0)
     parser.add_argument("--fid-num-samples", type=int, default=5000)
     parser.add_argument("--fid-batch", type=int, default=128)
 

@@ -37,7 +37,7 @@ def build_dataset(is_train, args, transform):
         dataset = INatLatentDataset(root_dir=args.data_path, transform=None)
         dataset.nb_classes = 10
 
-    elif args.dataset in ["imagenet256_latent", "latent"]:
+    elif args.dataset in ["imagenet256_latent", "latent", "imagenet256-splits", "imagenet256_splits"]:
         from .latent import ImageNet256LatentDataset
         dataset = ImageNet256LatentDataset(root_dir=args.data_path, transform=None)
         dataset.nb_classes = 1000

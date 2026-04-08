@@ -32,9 +32,15 @@ def build_dataset(is_train, args, transform):
         )
         dataset.nb_classes = 10
 
-    elif args.dataset == "latent":
+    elif args.dataset == "cifar10_latent":
         from .latent import INatLatentDataset
-        dataset = INatLatentDataset(root_dir=args.data_path, transform=transform)
+        dataset = INatLatentDataset(root_dir=args.data_path, transform=None)
+        dataset.nb_classes = 10
+
+    elif args.dataset in ["imagenet256_latent", "latent"]:
+        from .latent import ImageNet256LatentDataset
+        dataset = ImageNet256LatentDataset(root_dir=args.data_path, transform=None)
+        dataset.nb_classes = 1000
 
     else:
         raise NotImplementedError

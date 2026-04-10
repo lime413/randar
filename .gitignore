@@ -182,6 +182,7 @@ cython_debug/
 
 # Datasets
 data/*
+!data/split_cifar10.py
 !data/load_CIFAR10.py
 !data/imagenet256_preprocessing.py
 !data/load_and_split_CIFAR10C.py

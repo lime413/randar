@@ -3,6 +3,61 @@ from torch.utils.data import Dataset
 import numpy as np
 from pathlib import Path
 from PIL import Image
+from typing import Callable, Optional, Tuple
+
+class CIFAR10_split(Dataset):
+    """
+    Wraps our loaded CIFAR10 dataset with raw pictures to return (image, label, index)
+    """
+    def __init__(
+        self,
+        root: str,
+        split: str = "train",
+        transform: Optional[Callable] = None,
+    ):
+        assert split in ["train", "val", "test"], "split must be train/val/test"
+        
+        self.root = Path(root)
+        self.split = split
+        self.transform = transform
+        
+        self.class_names = [
+            "airplane", "automobile", "bird", "cat", "deer",
+            "dog", "frog", "horse", "ship", "truck"
+        ]
+        self.class_to_idx = {name: idx for idx, name in enumerate(self.class_names)}
+        
+        split_folder = self.root / split
+        
+        self.samples = []
+        self.labels = []
+        
+        for class_name in self.class_names:
+            class_path = split_folder / class_name
+            if not class_path.exists():
+                continue
+            
+            for img_file in sorted(class_path.iterdir()):
+                if img_file.suffix.lower() in [".png", ".jpg", ".jpeg", ".bmp", ".gif"]:
+                    self.samples.append(img_file)
+                    self.labels.append(self.class_to_idx[class_name])
+        
+        self.nb_classes = 10
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, index: int) -> Tuple:
+        img_path = self.samples[index]
+        label = self.labels[index]
+        
+        img = Image.open(img_path).convert("RGB")
+        
+        if self.transform is not None:
+            img = self.transform(img)
+        
+        return img, label, index
+    
 
 class CIFAR10WithIndex(Dataset):
     """

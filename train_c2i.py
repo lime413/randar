@@ -106,15 +106,16 @@ def main(args):
     # Dataset / Dataloader
     # -------------------------
     is_train = not args.debug
-    dataset = build_dataset(is_train=is_train, args=args, transform=transforms.ToTensor())
+    dataset_train = build_dataset(is_train=True, args=args, transform=transforms.ToTensor())
+    dataset_val = build_dataset(is_train=False, args=args, transform=transforms.ToTensor())
 
     # Single GPU => per_gpu_batch_size is just global_batch_size / grad_accum
     grad_accum = int(config.accelerator.gradient_accumulation_steps)
     assert grad_accum >= 1
     per_gpu_batch_size = int(config.global_batch_size // grad_accum)
 
-    data_loader = DataLoader(
-        dataset,
+    data_loader_train = DataLoader(
+        dataset_train,
         batch_size=per_gpu_batch_size,
         shuffle=True,
         num_workers=args.num_workers,
@@ -123,10 +124,25 @@ def main(args):
         persistent_workers=(args.num_workers > 0),
         prefetch_factor=2 if args.num_workers > 0 else None,
     )
-    data_loader = cycle(data_loader)
+    data_loader_train = cycle(data_loader_train)
+
+
+    
+    data_loader_val = DataLoader(
+        dataset_val,
+        batch_size=per_gpu_batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=False,
+        persistent_workers=(args.num_workers > 0),
+        prefetch_factor=2 if args.num_workers > 0 else None,
+    )
+    data_loader_val = cycle(data_loader_val)
 
     if args.clearml:
-        cml_logger.report_text(f"Dataset contains {len(dataset)} samples.")
+        cml_logger.report_text(f"Train dataset contains {len(dataset_train)} samples.")
+        cml_logger.report_text(f"Val dataset contains {len(dataset_val)} samples.")
         cml_logger.report_text(f"Per-step batch size (on cuda:0): {per_gpu_batch_size}")
         cml_logger.report_text(f"Grad accumulation steps: {grad_accum}")
         cml_logger.report_text(f"Effective global batch size: {per_gpu_batch_size * grad_accum}")
@@ -206,6 +222,7 @@ def main(args):
     shuffle_ratio = args.max_shuffle_ratio
 
     running_loss = 0.0
+    running_val_loss = 0.0
     running_grad_norm = 0.0
     start_time = time.time()
 
@@ -238,7 +255,6 @@ def main(args):
     @torch.no_grad()
     def compute_ece(
         model,
-        tokenizer,
         dataset,
         device,
         num_samples=5000,
@@ -414,6 +430,9 @@ def main(args):
         return fid
 
     while train_steps < total_iters:
+        # -------------------------
+        # TRAIN STEP
+        # -------------------------
         model.train()
 
         # Gradient accumulation loop
@@ -423,7 +442,7 @@ def main(args):
         grad_norm = 0.0
 
         for micro in range(grad_accum):
-            x, y, _ = next(data_loader)
+            x, y, _ = next(data_loader_train)
 
             # x typically has shape (B, 1, T)
             x = x.to(device, non_blocking=True)
@@ -464,12 +483,39 @@ def main(args):
         running_grad_norm += grad_norm
 
         train_steps += 1
+        # -------------------------
+        # VALIDATION STEP
+        # -------------------------
+        model.eval()
+
+        val_loss_this_step = 0.0
+
+        
+        with torch.no_grad():
+            val_x, val_y, _ = next(data_loader_val)
+           
+            
+            val_x = val_x.to(device, non_blocking=True)
+            val_y = val_y.to(device, non_blocking=True)
+            
+            val_tokens = val_x.reshape(val_x.shape[0], -1)
+            val_cond = val_y.reshape(-1)
+            
+            with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
+                _, val_loss, _ = model(val_tokens, val_cond, targets=val_tokens, shuffle_ratio = 0.0)
+            
+            val_loss_this_step = float(val_loss.detach().item())
+        
+        model.train()
+        
+        running_val_loss += val_loss_this_step
 
         # -------------------------
         # Logging
         # -------------------------
         if train_steps % log_every == 0:
             avg_loss = running_loss / log_every
+            avg_val_loss = running_val_loss / log_every
 
             if args.early_stop_patience > 0:
                 if avg_loss < best_loss - args.early_stop_min_delta:
@@ -494,6 +540,7 @@ def main(args):
             
             avg_grad = running_grad_norm / log_every
             avg_ppl = math.exp(min(avg_loss, 20.0))
+            val_ppl = math.exp(min(avg_val_loss, 20.0))
 
             end_time = time.time()
             avg_time = (end_time - start_time) / log_every
@@ -502,8 +549,9 @@ def main(args):
             lr = lr_scheduler.get_last_lr()[0]
             if args.clearml:
                 cml_logger.report_text(
-                    f"Step {train_steps:08d} | Loss {avg_loss:.4f} | Time left {avg_time* (total_iters - train_steps):.0f}s | "
-                    f"Grad Norm {avg_grad:.4f} | LR {lr:.6f}"
+                    f"Step {train_steps:08d} | Train Loss {avg_loss:.4f} | Val loss  {avg_val_loss:.4f}| Time left {avg_time* (total_iters - train_steps):.0f}s | "
+                    f"Grad Norm {avg_grad:.4f} | LR {lr:.6f} |" 
+                    f"Shuffle ratio {shuffle_ratio}"
                 )
 
             if args.clearml:
@@ -512,17 +560,31 @@ def main(args):
                 cml_logger.report_scalar("train", "time_sec", iteration=train_steps, value=avg_time)
                 cml_logger.report_scalar("train", "grad_norm", iteration=train_steps, value=avg_grad)
                 cml_logger.report_scalar("train", "lr", iteration=train_steps, value=lr)
+                cml_logger.report_scalar("train", "shuffle_ratio", iteration=train_steps, value=shuffle_ratio)
+
+                cml_logger.report_scalar("val", "val_loss", iteration=train_steps, value=avg_val_loss)
+                cml_logger.report_scalar("val", "val_ppl", iteration=train_steps, value=val_ppl)
 
             running_loss = 0.0
+            running_val_loss = 0.0
             running_grad_norm = 0.0
         # -------------------------
         # ECE evaluation
         # -------------------------
         if ece_every > 0 and (train_steps % ece_every == 0):
-            ece_metrics = compute_ece(
+
+            ece_metrics_train = compute_ece(
                 model=model,
-                tokenizer=tokenizer,
-                dataset=dataset,  # change to validation later
+                dataset=dataset_train,  
+                device=device,
+                num_samples=args.ece_num_samples,
+                batch_size=args.ece_batch_size,
+                num_bins=15,
+            )
+
+            ece_metrics_val = compute_ece(
+                model=model,
+                dataset=dataset_val,  
                 device=device,
                 num_samples=args.ece_num_samples,
                 batch_size=args.ece_batch_size,
@@ -530,10 +592,10 @@ def main(args):
             )
             
             # shuffle_ratio based on ECE
-            current_ece = ece_metrics["ece"]
+            current_ece = ece_metrics_val["ece"]
             new_shuffle_ratio = update_randomization_params(
                 model, 
-                ece_metrics, 
+                ece_metrics_val, 
                 ece_threshold=args.ece_threshold,
                 max_shuffle_ratio=args.max_shuffle_ratio
             )
@@ -543,16 +605,21 @@ def main(args):
             
             if args.clearml:
                 cml_logger.report_text(
-                    f"Step {train_steps:08d} | ECE {current_ece:.4f} | "
-                    f"Acc {ece_metrics['token_accuracy']:.4f} | "
-                    f"Conf {ece_metrics['mean_confidence']:.4f} | "
+                    f"Step {train_steps:08d} | ECE val {current_ece:.4f} | ECE train {ece_metrics_train["ece"]:.4f} |"
+                    f"Acc val {ece_metrics_val['token_accuracy']:.4f} | "
+                    f"Conf val {ece_metrics_val['mean_confidence']:.4f} | "
                     f"Shuffle Ratio {shuffle_ratio:.2f}"
                 )
-                cml_logger.report_scalar("eval", "ECE", iteration=train_steps, value=current_ece)
-                cml_logger.report_scalar("eval", "token_accuracy", iteration=train_steps, value=ece_metrics['token_accuracy'])
-                cml_logger.report_scalar("eval", "mean_confidence", iteration=train_steps, value=ece_metrics['mean_confidence'])
-                cml_logger.report_scalar("eval", "overconfidence_gap", iteration=train_steps, value=ece_metrics['overconfidence_gap'])
-                cml_logger.report_scalar("eval", "shuffle_ratio", iteration=train_steps, value=shuffle_ratio)
+                cml_logger.report_scalar("eval_ece_val", "ECE", iteration=train_steps, value=current_ece)
+                cml_logger.report_scalar("eval_ece_val", "token_accuracy", iteration=train_steps, value=ece_metrics_val['token_accuracy'])
+                cml_logger.report_scalar("eval_ece_val", "mean_confidence", iteration=train_steps, value=ece_metrics_val['mean_confidence'])
+                cml_logger.report_scalar("eval_ece_val", "overconfidence_gap", iteration=train_steps, value=ece_metrics_val['overconfidence_gap'])
+                cml_logger.report_scalar("eval_ece_val", "shuffle_ratio", iteration=train_steps, value=shuffle_ratio)
+
+                cml_logger.report_scalar("eval_ece_train", "ECE", iteration=train_steps, value=ece_metrics_train["ece"])
+                cml_logger.report_scalar("eval_ece_train", "token_accuracy", iteration=train_steps, value=ece_metrics_train['token_accuracy'])
+                cml_logger.report_scalar("eval_ece_train", "mean_confidence", iteration=train_steps, value=ece_metrics_train['mean_confidence'])
+                cml_logger.report_scalar("eval_ece_train", "overconfidence_gap", iteration=train_steps, value=ece_metrics_train['overconfidence_gap'])
         # -------------------------
         # FID evaluation
         # -------------------------
@@ -560,7 +627,7 @@ def main(args):
             fid_value = compute_fid(
                 model=model,
                 tokenizer=tokenizer,
-                dataset=dataset,
+                dataset=dataset_val,
                 device=device,
                 num_samples=args.fid_num_samples,
                 batch_size=args.fid_batch,
@@ -723,17 +790,17 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--config", type=str, default="configs/llamagen/randar_0.3b_llamagen.yaml")
+    parser.add_argument("--config", type=str, default="configs/randar_cifar10_adaptive.yaml")
     parser.add_argument("--results-dir", type=str, default="results")
 
     parser.add_argument("--image-size", type=int, choices=[32, 128, 256], default=32)
     parser.add_argument("--num-classes", type=int, default=10)
 
     # Training
-    parser.add_argument("--max-iters", type=int, default=95000)
+    parser.add_argument("--max-iters", type=int, default=50000)
     parser.add_argument("--global-seed", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=0)
-    parser.add_argument("--log-every", type=int, default=1)
+    parser.add_argument("--log-every", type=int, default=20)
     parser.add_argument("--ckpt-every", type=int, default=1000)
     parser.add_argument("--keep-last-k", type=int, default=1)
     parser.add_argument("--mixed-precision", type=str, default="bf16", choices=["none", "fp16", "bf16"])
@@ -742,20 +809,21 @@ if __name__ == "__main__":
     parser.add_argument("--early-stop-min-delta", type=float, default=0.001)
 
     #new ECE params
-    parser.add_argument('--ece-every', type=int, default=0)
+    parser.add_argument('--ece-every', type=int, default=500)
     parser.add_argument('--ece-num-samples', type=int, default=5000)
     parser.add_argument('--ece-batch-size', type=int, default=128)
     parser.add_argument('--ece-threshold', type=float, default=0.05)
     parser.add_argument('--max-shuffle-ratio', type=float, default=0.5)
 
-    parser.add_argument("--exp_name", type=str, default="testing")
+    parser.add_argument("--exp_name", type=str, default="adaptive_50k_test")
 
     # Tokenizer ckpt
-    parser.add_argument("--vq-ckpt", type=str, default="tokenizer_llamagen/vq_ds16_c2i.pt")
+    parser.add_argument("--vq-ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")
 
     # Data
-    parser.add_argument("--dataset", type=str, default="latent")
-    parser.add_argument("--data-path", type=str, default="data/imagenet256-splits/train")
+    parser.add_argument("--dataset", type=str, default="cifar10_latent")
+    parser.add_argument("--data-path", type=str, default="data/latents/cifar10_split/cifar10_split-train-vq-vae-512-32_codes")
+    parser.add_argument("--val-path", type=str, default="data/latents/cifar10_split/cifar10_split-val-vq-vae-512-32_codes")
     parser.add_argument("--debug", action="store_true")
 
     # Visualization

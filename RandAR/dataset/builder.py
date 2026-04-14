@@ -45,7 +45,10 @@ def build_dataset(is_train, args, transform, split = None):
 
     elif args.dataset == "cifar10_latent":
         from .latent import INatLatentDataset
-        dataset = INatLatentDataset(root_dir=args.data_path, transform=None)
+        if is_train:
+            dataset = INatLatentDataset(root_dir=args.data_path, transform=None)
+        else:
+            dataset = INatLatentDataset(root_dir=args.val_path, transform=None)
         dataset.nb_classes = 10
 
     elif args.dataset in ["imagenet256_latent", "latent", "imagenet256-splits", "imagenet256_splits"]:

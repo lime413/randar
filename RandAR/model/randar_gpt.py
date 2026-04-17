@@ -329,9 +329,10 @@ class RandARTransformer(nn.Module):
         mask: Optional[torch.Tensor] = None,
         valid: Optional[torch.Tensor] = None,
         shuffle_ratio: Optional[float] = None,
+        val_flag: Optional[bool] = False,
     ):
         if idx is not None and cond_idx is not None:
-            return self.forward_train(idx, cond_idx, token_order, input_pos, targets, mask, valid, shuffle_ratio)
+            return self.forward_train(idx, cond_idx, token_order, input_pos, targets, mask, valid, shuffle_ratio, val_flag)
         else:
             raise ValueError("idx and cond_idx cannot be both None")
         
@@ -343,7 +344,9 @@ class RandARTransformer(nn.Module):
                       targets: Optional[torch.Tensor] = None,
                       mask: Optional[torch.Tensor] = None,
                       valid: Optional[torch.Tensor] = None,
-                      shuffle_ratio: Optional[float] = None, ):
+                      shuffle_ratio: Optional[float] = None,
+                      val_flag: Optional[bool] = False,
+                        ):
         """ Args:
             idx: [bsz, seq_len] GT image tokens for teacher forcing
             cond_idx: [bsz, cls_token_num] Cls tokens
@@ -357,32 +360,37 @@ class RandARTransformer(nn.Module):
         # 1. Prepare orders
         bs = idx.shape[0]
         if token_order is None:
-            if self.position_order == "random":
-                token_order = torch.arange(self.block_size, device=self.tok_embeddings.weight.device, dtype=torch.long)
-                token_order = token_order.unsqueeze(0).repeat(bs, 1)
-                for i in range(bs):
-                    token_order[i] = token_order[i][torch.randperm(self.block_size)]
-                token_order = token_order.contiguous()
-            elif self.position_order == "raster":
+            if val_flag:
                 token_order = torch.arange(self.block_size, device=idx.device)
                 token_order = token_order.unsqueeze(0).repeat(bs, 1)
                 token_order = token_order.contiguous()
-            elif self.position_order == "adaptive":
-                token_order = torch.arange(self.block_size, device=self.tok_embeddings.weight.device, dtype=torch.long)
-                token_order = token_order.unsqueeze(0).repeat(bs, 1)
-
-                for i in range(bs):
-                    num_to_shuffle = int(self.block_size * shuffle_ratio)
-                    
-                    if num_to_shuffle > 0:
-                        shuffle_indices = torch.randperm(self.block_size, device=idx.device)[:num_to_shuffle]
-                        shuffled_values = token_order[i, shuffle_indices][torch.randperm(num_to_shuffle, device=idx.device)]
-                        token_order[i, shuffle_indices] = shuffled_values
-
-
-                token_order = token_order.contiguous()
             else:
-                raise ValueError(f"Invalid position order: {self.position_order}")
+                if self.position_order == "random":
+                    token_order = torch.arange(self.block_size, device=self.tok_embeddings.weight.device, dtype=torch.long)
+                    token_order = token_order.unsqueeze(0).repeat(bs, 1)
+                    for i in range(bs):
+                        token_order[i] = token_order[i][torch.randperm(self.block_size)]
+                    token_order = token_order.contiguous()
+                elif self.position_order == "raster":
+                    token_order = torch.arange(self.block_size, device=idx.device)
+                    token_order = token_order.unsqueeze(0).repeat(bs, 1)
+                    token_order = token_order.contiguous()
+                elif self.position_order == "adaptive":
+                    token_order = torch.arange(self.block_size, device=self.tok_embeddings.weight.device, dtype=torch.long)
+                    token_order = token_order.unsqueeze(0).repeat(bs, 1)
+
+                    for i in range(bs):
+                        num_to_shuffle = int(self.block_size * shuffle_ratio)
+                        
+                        if num_to_shuffle > 0:
+                            shuffle_indices = torch.randperm(self.block_size, device=idx.device)[:num_to_shuffle]
+                            shuffled_values = token_order[i, shuffle_indices][torch.randperm(num_to_shuffle, device=idx.device)]
+                            token_order[i, shuffle_indices] = shuffled_values
+
+
+                    token_order = token_order.contiguous()
+                else:
+                    raise ValueError(f"Invalid position order: {self.position_order}")
         
         # permute the image tokens according to the random order
         idx = torch.gather(idx.unsqueeze(-1), 1, token_order.unsqueeze(-1)).squeeze(-1).contiguous() # [bsz, seq_len]

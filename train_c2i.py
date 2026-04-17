@@ -502,7 +502,7 @@ def main(args):
             val_cond = val_y.reshape(-1)
             
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
-                _, val_loss, _ = model(val_tokens, val_cond, targets=val_tokens, shuffle_ratio = 0.0)
+                _, val_loss, _ = model(val_tokens, val_cond, targets=val_tokens, shuffle_ratio = 0.0, val_flag = True)
             
             val_loss_this_step = float(val_loss.detach().item())
         
@@ -790,7 +790,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--config", type=str, default="configs/randar_cifar10_adaptive.yaml")
+    parser.add_argument("--config", type=str, default="configs/randar_cifar10_random_order.yaml")
     parser.add_argument("--results-dir", type=str, default="results")
 
     parser.add_argument("--image-size", type=int, choices=[32, 128, 256], default=32)
@@ -809,13 +809,13 @@ if __name__ == "__main__":
     parser.add_argument("--early-stop-min-delta", type=float, default=0.001)
 
     #new ECE params
-    parser.add_argument('--ece-every', type=int, default=500)
+    parser.add_argument('--ece-every', type=int, default=0)
     parser.add_argument('--ece-num-samples', type=int, default=5000)
     parser.add_argument('--ece-batch-size', type=int, default=128)
     parser.add_argument('--ece-threshold', type=float, default=0.05)
     parser.add_argument('--max-shuffle-ratio', type=float, default=0.5)
 
-    parser.add_argument("--exp_name", type=str, default="adaptive_50k_test")
+    parser.add_argument("--exp_name", type=str, default="random_50k")
 
     # Tokenizer ckpt
     parser.add_argument("--vq-ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")

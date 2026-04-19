@@ -84,6 +84,7 @@ def eval_token_calibration(
     device: torch.device,
     order_mode: str,
     num_bins: int = 15,
+    shuffle_ratio: float | None = None,
 ) -> Dict[str, float]:
     """
     Token-level calibration for clean CIFAR-10 latent codes.
@@ -130,7 +131,11 @@ def eval_token_calibration(
 
         B, T = tokens.shape
 
-        token_order = make_token_order(B, T, device, order_mode) if accepts_token_order else None
+        token_order = (
+            make_token_order(B, T, device, order_mode, shuffle_ratio=shuffle_ratio)
+            if accepts_token_order
+            else None
+        )
 
         logits, _, used_order = model(tokens, cond, token_order=token_order, targets=tokens)
 
@@ -519,7 +524,13 @@ def evaluate_sample_calibration(
             y = y[:remaining]
 
         B = y.shape[0]
-        token_order = make_token_order(B, T, device, args.generation_order)
+        token_order = make_token_order(
+            B,
+            T,
+            device,
+            args.generation_order,
+            shuffle_ratio=getattr(args, "shuffle_ratio", None),
+        )
 
         gen_tokens, token_logps = generate_with_logprobs(
             model=model,

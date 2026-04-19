@@ -61,6 +61,7 @@ dataset:
 exp_name: "randar_cifar10"
 max_iters: 360000 # 100k firt
 global_batch_size: 512
+max_shuffle_ratio: 1.0
 ema: False 
 ema_decay: 0.9999
 
@@ -75,7 +76,7 @@ results_dir: "results/" # will append exp_name later => results_dir/exp_name
 gpt_ckpt: None # path to resume from
 
 # for eval fid:
-vq_ckpt: "./checkpoints/vq_ds16_c2i.pt"
+vq_ckpt: "./tokenizer_vq/vqvae_cifar10.pth"
 
 fid_ref_path: "/mnt/localssd/dataset/VIRTUAL_imagenet256_labeled.npz"
 fid_save_dir: "/mnt/localssd/results_tmp/"

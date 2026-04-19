@@ -93,6 +93,31 @@ def make_token_order(
     raise ValueError(f"Unknown order mode: {mode}")
 
 
+def resolve_order_mode(model: torch.nn.Module, mode: str) -> str:
+    if mode == "config":
+        return getattr(model, "position_order", "raster")
+    return mode
+
+
+def resolve_shuffle_ratio(
+    resolved_order_mode: str,
+    config_max_shuffle_ratio: Optional[float] = None,
+    explicit_shuffle_ratio: Optional[float] = None,
+) -> Optional[float]:
+    if resolved_order_mode != "adaptive":
+        return None
+
+    if explicit_shuffle_ratio is not None:
+        return float(explicit_shuffle_ratio)
+    if config_max_shuffle_ratio is not None:
+        return float(config_max_shuffle_ratio)
+
+    raise ValueError(
+        "Adaptive evaluation requires a shuffle ratio. "
+        "Provide it explicitly or store max_shuffle_ratio in the config."
+    )
+
+
 # -------------------------
 # Atomic save
 # -------------------------

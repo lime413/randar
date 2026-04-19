@@ -54,6 +54,10 @@ def main(args):
         config.max_iters = args.max_iters
     if args.global_seed is not None:
         config.global_seed = args.global_seed
+    if args.max_shuffle_ratio is not None:
+        config.max_shuffle_ratio = args.max_shuffle_ratio
+    elif not hasattr(config, "max_shuffle_ratio"):
+        config.max_shuffle_ratio = 0.0
 
     set_seed(config.global_seed)
 
@@ -219,7 +223,7 @@ def main(args):
 
     #calibration based on ECE
     ece_every = int(args.ece_every)
-    shuffle_ratio = args.max_shuffle_ratio
+    shuffle_ratio = float(config.max_shuffle_ratio)
 
     running_loss = 0.0
     running_val_loss = 0.0
@@ -597,7 +601,11 @@ def main(args):
                 model, 
                 ece_metrics_val, 
                 ece_threshold=args.ece_threshold,
-                max_shuffle_ratio=args.max_shuffle_ratio
+                max_shuffle_ratio=(
+                    args.max_shuffle_ratio
+                    if args.max_shuffle_ratio is not None
+                    else float(config.max_shuffle_ratio)
+                ),
             )
             
             # save new shuffle_ratio
@@ -813,7 +821,7 @@ if __name__ == "__main__":
     parser.add_argument('--ece-num-samples', type=int, default=5000)
     parser.add_argument('--ece-batch-size', type=int, default=128)
     parser.add_argument('--ece-threshold', type=float, default=0.05)
-    parser.add_argument('--max-shuffle-ratio', type=float, default=0.5)
+    parser.add_argument('--max-shuffle-ratio', type=float, default=None)
 
     parser.add_argument("--exp_name", type=str, default="random_50k")
 

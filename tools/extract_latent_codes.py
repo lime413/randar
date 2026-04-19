@@ -18,7 +18,7 @@ import sys
 sys.path.append("./")
 
 from RandAR.dataset.builder import build_dataset
-from RandAR.utils.instantiation import instantiate_from_config
+from RandAR.utils.instantiation import instantiate_from_config, load_state_dict
 from RandAR.utils.latents import encode_images, _save_payload
 
 # -------------------------
@@ -27,7 +27,7 @@ from RandAR.utils.latents import encode_images, _save_payload
 def load_tokenizer_from_yaml(args: argparse.Namespace, device: torch.device) -> torch.nn.Module:
     config = OmegaConf.load(args.config)
     vq_model = instantiate_from_config(config.model).to(device)
-    vq_model.load_state_dict(torch.load(args.vq_ckpt, map_location=device, weights_only=True), strict=True)
+    load_state_dict(vq_model, args.vq_ckpt)
     vq_model.eval()
     for p in vq_model.parameters():
         p.requires_grad_(False)

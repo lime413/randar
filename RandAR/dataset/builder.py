@@ -40,6 +40,8 @@ def build_dataset(is_train, args, transform, split = None):
             severity_dir=args.data_path,
             labels_path=os.path.join(parent_dir, "labels.npy"),
             transform=transform,
+            target_total_size=getattr(args, "cifar10c_target_total_size", 10000),
+            seed=getattr(args, "cifar10c_seed", 42),
         )
         dataset.nb_classes = 10
 

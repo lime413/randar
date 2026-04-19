@@ -25,6 +25,7 @@ def eval_nll_ppl_acc(
     test_loader,
     device: torch.device,
     order_mode: str,
+    shuffle_ratio: Optional[float] = None,
 ) -> Tuple[float, float, float]:
     """
       - NLL/token computed by cross_entropy(logits, targets_pred_order), summed then normalized
@@ -64,7 +65,11 @@ def eval_nll_ppl_acc(
                 "This must match for correct evaluation. Fix your latent .npy generation or your config."
             )
 
-        token_order = make_token_order(B, T, device, order_mode) if accepts_token_order else None
+        token_order = (
+            make_token_order(B, T, device, order_mode, shuffle_ratio=shuffle_ratio)
+            if accepts_token_order
+            else None
+        )
 
         logits, _, used_order = model(tokens, cond, token_order=token_order, targets=tokens)
 

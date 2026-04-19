@@ -53,13 +53,35 @@ def main(args):
         persistent_workers=(args.num_workers > 0),
     )
 
+    raw_dataset_args = argparse.Namespace(
+        dataset=args.raw_dataset,
+        data_path=args.raw_data_path,
+        cifar10c_target_total_size=args.cifar10c_target_total_size,
+        cifar10c_seed=args.cifar10c_seed,
+    )
+    raw_dataset = build_dataset(
+        is_train=False,
+        args=raw_dataset_args,
+        transform=transforms.ToTensor(),
+    )
+    raw_loader = DataLoader(
+        raw_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        drop_last=False,
+        persistent_workers=(args.num_workers > 0),
+    )
+
     tokenizer = instantiate_from_config(config.tokenizer).to(device)
-    tokenizer.load_state_dict(torch.load(args.vq_ckpt, map_location=device))
+    load_state_dict(tokenizer, args.vq_ckpt)
     tokenizer.eval()
 
     model = instantiate_from_config(config.ar_model).to(device)
     load_state_dict(model, args.ar_ckpt)
     model.eval()
+    config_max_shuffle_ratio = float(getattr(config, "max_shuffle_ratio", 0.0))
 
     cfg_scales_search = [float(cfg_scale) for cfg_scale in args.cfg_scales_search.split(",")]
     cfg_scales = np.arange(cfg_scales_search[0], cfg_scales_search[1] + 1e-4, float(args.cfg_scales_interval))
@@ -93,6 +115,7 @@ def main(args):
             model=model,
             tokenizer=tokenizer,
             test_loader=test_loader,
+            raw_image_loader=raw_loader,
             device=device,
             image_size=args.image_size,
             num_samples=args.num_fid_samples,
@@ -101,6 +124,7 @@ def main(args):
             temperature=args.temperature,
             top_k=args.top_k,
             top_p=args.top_p,
+            config_max_shuffle_ratio=config_max_shuffle_ratio,
         )
         fid_value = float(fid_value)
 
@@ -146,12 +170,16 @@ if __name__ == "__main__":
     parser.add_argument("--vq_ckpt", type=str, default="tokenizer_vq/vqvae_cifar10.pth")
 
     # generation / eval setup
-    parser.add_argument("--order_mode_for_gen", type=str, default="raster", choices=["raster", "random", "config"])
+    parser.add_argument("--order_mode_for_gen", type=str, default="raster", choices=["raster", "random", "adaptive", "config"])
     parser.add_argument("--num_fid_samples", type=int, default=2000)
     parser.add_argument("--image_size", type=int, default=32)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top_k", type=int, default=0)
     parser.add_argument("--top_p", type=float, default=1.0)
+    parser.add_argument("--raw-dataset", type=str, default="cifar10", choices=["cifar10", "cifar10c"])
+    parser.add_argument("--raw-data-path", type=str, default="data/cifar10-all/cifar10")
+    parser.add_argument("--cifar10c-target-total-size", type=int, default=10000)
+    parser.add_argument("--cifar10c-seed", type=int, default=42)
 
     # search setup
     parser.add_argument("--cfg-scales-search", type=str, default="1.0, 4.0")

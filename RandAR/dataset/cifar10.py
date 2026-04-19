@@ -96,7 +96,14 @@ class CIFAR10CSeverityDataset(Dataset):
     ):
         self.severity_dir = Path(severity_dir)
         self.labels_path = Path(labels_path)
-        self.severity = int(severity_dir.split('/')[-1].split('_')[-1])
+        severity_name = self.severity_dir.name
+        try:
+            self.severity = int(severity_name.split("_")[-1])
+        except ValueError as exc:
+            raise ValueError(
+                f"Could not parse severity from directory name '{severity_name}'. "
+                "Expected a folder like 'severity_1'."
+            ) from exc
         self.transform = transform
         self.target_total_size = int(target_total_size)
         self.seed = int(seed)
@@ -121,12 +128,23 @@ class CIFAR10CSeverityDataset(Dataset):
         self.labels = full_labels[start:end]
 
         self.corruption_files = sorted(
-            [p for p in self.severity_dir.glob("*.npy") if p.name != "labels.npy"]
+            [
+                p
+                for p in self.severity_dir.iterdir()
+                if p.is_file() and p.suffix.lower() in {".npy", ".npz"} and p.name != "labels.npy"
+            ]
         )
         if len(self.corruption_files) == 0:
-            raise ValueError(f"No corruption .npy files found in {self.severity_dir}")
+            raise ValueError(f"No corruption .npy/.npz files found in {self.severity_dir}")
 
-        self.arrays = [np.load(path, mmap_mode="r") for path in self.corruption_files]
+        self.arrays = []
+        for path in self.corruption_files:
+            loaded = np.load(path, mmap_mode="r")
+            if isinstance(loaded, np.lib.npyio.NpzFile):
+                if "arr_0" not in loaded.files:
+                    raise ValueError(f"Expected key 'arr_0' in {path}, found {loaded.files}")
+                loaded = loaded["arr_0"]
+            self.arrays.append(loaded)
 
         self.samples_per_corruption_full = 10000
 

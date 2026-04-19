@@ -1,9 +1,30 @@
+# Modified from:
+#   taming-transformers: https://github.com/CompVis/taming-transformers
+#   maskgit: https://github.com/google-research/maskgit
+#   llamagen: https://github.com/FoundationVision/LlamaGen/blob/main/tokenizer/tokenizer_image/vq_model.py
+
 from dataclasses import dataclass, field
 from typing import List
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+# Unused, copied from LLaMAGen
+@dataclass
+class ModelArgs:
+    codebook_size: int = 16384
+    codebook_embed_dim: int = 8
+    codebook_l2_norm: bool = True
+    codebook_show_usage: bool = True
+    commit_loss_beta: float = 0.25
+    entropy_loss_ratio: float = 0.0
+    
+    encoder_ch_mult: List[int] = field(default_factory=lambda: [1, 1, 2, 2, 4])
+    decoder_ch_mult: List[int] = field(default_factory=lambda: [1, 1, 2, 2, 4])
+    z_channels: int = 256
+    dropout_p: float = 0.0
 
 
 class VQModel(nn.Module):

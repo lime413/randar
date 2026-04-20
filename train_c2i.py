@@ -609,7 +609,8 @@ def main(args):
             )
             
             # save new shuffle_ratio
-            shuffle_ratio = new_shuffle_ratio
+            if train_steps >  args.steps_max_shuffle:
+                shuffle_ratio = new_shuffle_ratio
             
             if args.clearml:
                 cml_logger.report_text(
@@ -817,11 +818,12 @@ if __name__ == "__main__":
     parser.add_argument("--early-stop-min-delta", type=float, default=0.001)
 
     #new ECE params
-    parser.add_argument('--ece-every', type=int, default=0)
+    parser.add_argument('--ece-every', type=int, default=500)
     parser.add_argument('--ece-num-samples', type=int, default=5000)
     parser.add_argument('--ece-batch-size', type=int, default=128)
     parser.add_argument('--ece-threshold', type=float, default=0.05)
-    parser.add_argument('--max-shuffle-ratio', type=float, default=None)
+    parser.add_argument('--max-shuffle-ratio', type=float, default=1.0)
+    parser.add_argument('--steps-max-shuffle', type=int, default=5000)
 
     parser.add_argument("--exp_name", type=str, default="random_50k")
 
